@@ -1,46 +1,40 @@
-const odbc = require('odbc');
-
-const erpConnectionString = process.env.ERP_ODBC_CONNECTION_STRING;
-
-async function queryErp(sqlQuery, params = []) {
-  let connection;
-  try {
-    console.log('================================================');
-    console.log('EXECUNTANDO QUERY NO ERP:');
-    console.log('SQL:', sqlQuery);
-    console.log('Parâmetros:', params);
-    console.log('================================================');
-
-    connection = await odbc.connect(erpConnectionString);
-    const data = await connection.query(sqlQuery, params);
-    
-    console.log('DADOS RETORNADOS:', JSON.stringify(data, null, 2));
-    console.log('================================================');
-
-    return data;
-  } catch (error) {
-    console.error("Erro na conexão ODBC:", error);
-    throw error;
-  } finally {
-    if (connection) await connection.close();
-  }
-}
-
-// ... (o resto do ficheiro permanece igual)
 const { Pool } = require('pg');
+const axios = require('axios'); // Usado para fazer chamadas HTTP
+
+// Conexão com o banco de dados PostgreSQL (Supabase)
 const localDbPool = new Pool({
-  user: process.env.LOCAL_DB_USER,
-  host: process.env.LOCAL_DB_HOST,
-  database: process.env.LOCAL_DB_DATABASE,
-  password: process.env.LOCAL_DB_PASSWORD,
-  port: process.env.LOCAL_DB_PORT,
+    connectionString: process.env.DATABASE_URL, // Usa a variável do Supabase
 });
+
 async function getLocalClient() {
     const client = await localDbPool.connect();
     return client;
 }
 
+// MODIFICADO: Esta função agora se comunica com a ponte local.
+async function queryErp(sqlQuery, params = []) {
+    try {
+        console.log('Backend principal enviando query para a ponte...');
+        const response = await axios.post(
+            `${process.env.BRIDGE_URL}/query-erp`,
+            {
+                sqlQuery,
+                params
+            },
+            {
+                headers: {
+                    'x-bridge-secret': process.env.BRIDGE_SECRET_KEY
+                }
+            }
+        );
+        return response.data;
+    } catch (error) {
+        console.error("Erro ao comunicar com a ponte ODBC:", error.response ? error.response.data : error.message);
+        throw new Error('Falha na comunicação com o sistema ERP.');
+    }
+}
+
 module.exports = {
-  queryErp,
-  getLocalClient
+    queryErp,
+    getLocalClient
 };

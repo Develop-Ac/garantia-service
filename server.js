@@ -4,17 +4,18 @@ const cors = require('cors');
 const path = require('path');
 const app = express();
 
-// --- Middlewares ---
 app.use(cors());
-app.use(express.json()); // Para processar JSON
-app.use(express.text({ type: '*/*' })); // Para processar o corpo do e-mail do webhook
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// Servir ficheiros estáticos da pasta 'uploads'
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Permite o download de formulários da pasta 'form_templates'
+app.use('/form_templates', express.static(path.join(__dirname, 'form_templates')));
 
 // --- Rotas da API ---
 const garantiasRoutes = require('./routes/garantias');
+const fornecedoresRoutes = require('./routes/fornecedores');
 app.use('/api', garantiasRoutes);
+app.use('/api', fornecedoresRoutes);
 
 // --- Rota de Verificação de Status ---
 app.get('/status', (req, res) => {
@@ -25,9 +26,7 @@ app.get('/status', (req, res) => {
   });
 });
 
-// --- Inicialização do Servidor ---
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Servidor a rodar na porta ${PORT}`);
-  console.log(`Acesse http://localhost:${PORT}/status para verificar a conexão.`);
 });
