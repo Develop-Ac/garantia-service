@@ -1,10 +1,12 @@
 const { Pool } = require('pg');
 const axios = require('axios'); // Usado para fazer chamadas HTTP
 
+// MODIFICADO: Garante que o modo SSL seja adicionado à string de conexão.
+const connectionString = `${process.env.DATABASE_URL}?sslmode=require`;
+
 // Conexão com o banco de dados PostgreSQL (Supabase)
 const localDbPool = new Pool({
-    connectionString: process.env.DATABASE_URL, // Usa a variável do Supabase
-    // MODIFICADO: Adicionado para habilitar a conexão segura (SSL) exigida pelo Supabase.
+    connectionString: connectionString,
     ssl: {
         rejectUnauthorized: false
     }
