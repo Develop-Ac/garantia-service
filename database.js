@@ -1,14 +1,14 @@
 const { Pool } = require('pg');
 const axios = require('axios'); // Usado para fazer chamadas HTTP
 
-// MODIFICADO: Garante que o modo SSL seja adicionado à string de conexão.
-const connectionString = `${process.env.DATABASE_URL}?sslmode=require`;
-
 // Conexão com o banco de dados PostgreSQL (Supabase)
 const localDbPool = new Pool({
-    connectionString: connectionString,
+    connectionString: process.env.DATABASE_URL,
+    // MODIFICADO: Configuração SSL robusta para o Render.
+    // Ele usa o certificado CA que você adicionou nas variáveis de ambiente.
     ssl: {
-        rejectUnauthorized: false
+        rejectUnauthorized: true, // Força a verificação do certificado
+        ca: process.env.SUPABASE_CA_CERT,
     }
 });
 
