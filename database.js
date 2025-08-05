@@ -4,8 +4,9 @@ const axios = require('axios'); // Usado para fazer chamadas HTTP
 // Conexão com o banco de dados PostgreSQL (Supabase)
 const localDbPool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    // MODIFICADO: A configuração SSL foi removida para corresponder
-    // à opção "Enforce SSL" desabilitada no Supabase.
+    ssl: {
+        rejectUnauthorized: false // Desabilita a verificação de certificado SSL
+    }
 });
 
 async function getLocalClient() {

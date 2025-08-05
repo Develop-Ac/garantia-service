@@ -55,14 +55,14 @@ router.get('/garantias/:id', async (req, res) => {
 });
 
 
-// Rota POST /api/garantias
+// Rota POST /api/garantias (CORRIGIDA)
 router.post('/garantias', upload.array('anexos', 10), async (req, res) => {
     const {
         erpFornecedorId, nomeFornecedor, emailFornecedor, produtos,
         notaFiscal, // Usado como nota_interna
         descricao, copiasEmail, tipoGarantia, nfsCompra,
         outrosMeios,
-        protocoloFornecedor // NOVO CAMPO
+        protocoloFornecedor
     } = req.body;
 
     if (!erpFornecedorId || !produtos || !notaFiscal || !descricao || !tipoGarantia) {
@@ -73,12 +73,23 @@ router.post('/garantias', upload.array('anexos', 10), async (req, res) => {
     try {
         await client.query('BEGIN');
 
+        // MODIFICADO: A query agora tem 10 colunas e 10 placeholders ($1 a $10)
         const garantiaQuery = `
-            INSERT INTO garantias (erp_fornecedor_id, nome_fornecedor, email_fornecedor, produtos, nota_interna, descricao, tipo_garantia, nfs_compra, status)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Aguardando Aprovação do Fornecedor')
+            INSERT INTO garantias (
+                erp_fornecedor_id, nome_fornecedor, email_fornecedor, produtos, 
+                nota_interna, descricao, tipo_garantia, nfs_compra, status, 
+                protocolo_fornecedor
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             RETURNING id;
         `;
-        const garantiaValues = [erpFornecedorId, nomeFornecedor, emailFornecedor, produtos, notaFiscal, descricao, tipoGarantia, nfsCompra, protocoloFornecedor];
+        // MODIFICADO: O array de valores agora tem 10 itens para corresponder à query
+        const garantiaValues = [
+            erpFornecedorId, nomeFornecedor, emailFornecedor, produtos, 
+            notaFiscal, descricao, tipoGarantia, nfsCompra, 
+            'Aguardando Aprovação do Fornecedor', // status
+            protocoloFornecedor
+        ];
         const result = await client.query(garantiaQuery, garantiaValues);
         const novaGarantiaId = result.rows[0].id;
 
@@ -99,21 +110,15 @@ router.post('/garantias', upload.array('anexos', 10), async (req, res) => {
             const emailData = {
                 to: emailFornecedor,
                 cc: copiasEmail,
-                subject: `Abertura de Processo de ${tipoGarantia} - NF ${nfsCompra || 'N/A'}`,
-                text: `Prezados,\n\nAbrimos um processo de ${tipoGarantia} para o(s) seguinte(s) produto(s):\n- ${produtos}\n\nReferente à Nota Fiscal: ${nfsCompra}\n\nProblema Identificado: ${descricao}\n\nPor favor, verifiquem os anexos para mais detalhes.\n\nAtenciosamente,\nEquipe De Qualidade AC Acessórios.`,
-                html: `<p>Prezados,</p><p>Abrimos um processo de <b>${tipoGarantia}</b> para o(s) seguinte(s) produto(s):</p><ul><li>${produtos.replace(/; /g, '</li><li>')}</li></ul><p>Controle Interna: <b>${notaFiscal}</b></p><p><b>Descrição do problema:</b> ${descricao}</p><p>Por favor, verifiquem os anexos para mais detalhes.</p><p>Atenciosamente,<br>Equipe de Qualidade AC Acessórios.</p>`,
-                attachments: req.files.map(file => ({
-                    filename: file.originalname,
-                    path: file.path
-                }))
+                subject: `Abertura de ${tipoGarantia} - NI ${notaFiscal}`,
+                html: `<p>Prezados,</p><p>Abrimos um processo de <b>${tipoGarantia}</b> para o(s) seguinte(s) produto(s):</p><ul><li>${produtos.replace(/; /g, '</li><li>')}</li></ul><p>Referente à Nota Interna: <b>${notaFiscal}</b></p><p>Referente à(s) NF(s) de Compra: <b>${nfsCompra || 'N/A'}</b></p><p><b>Descrição do problema:</b> ${descricao}</p><p>Por favor, verifiquem os anexos para mais detalhes.</p><p>Atenciosamente,<br>Equipa de Qualidade AC Acessórios.</p>`,
             };
             
             await emailService.sendMail(emailData);
-            // MODIFICADO: Salva o corpo HTML do e-mail no histórico.
             historicoDesc = emailData.html;
             historicoTipo = 'Email Enviado';
         } else {
-            historicoDesc = `Processo de garantia criado manualmente (aberto por outros meios).`;
+            historicoDesc = `Processo de garantia criado manualmente (aberto por outros meios). Protocolo: ${protocoloFornecedor || 'N/A'}`;
         }
 
         const historicoQuery = `
@@ -137,7 +142,6 @@ router.post('/garantias', upload.array('anexos', 10), async (req, res) => {
         client.release();
     }
 });
-
 
 // Rota PUT /api/garantias/:id/status
 router.put('/garantias/:id/status', async (req, res) => {
