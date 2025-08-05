@@ -3,19 +3,32 @@ const router = express.Router();
 const db = require('../database');
 const upload = require('../upload');
 const emailService = require('../services/emailService');
-const { simpleParser } = require('mailparser');
 
-// Rota GET /api/garantias
+// Rota GET /api/garantias (OTIMIZADA)
 router.get('/garantias', async (req, res) => {
     const client = await db.getLocalClient();
     try {
         const queryText = `
             SELECT 
                 g.*, 
-                (SELECT json_agg(h) FROM historico_garantias h WHERE h.garantia_id = g.id) as historico,
-                (SELECT json_agg(a) FROM anexos_garantias a WHERE a.garantia_id = g.id) as anexos
+                COALESCE(h.historico, '[]'::json) as historico,
+                COALESCE(a.anexos, '[]'::json) as anexos
             FROM garantias g
-            ORDER BY g.data_criacao DESC
+            LEFT JOIN (
+                SELECT 
+                    garantia_id, 
+                    json_agg(historico_garantias.* ORDER BY data_ocorrencia DESC) as historico
+                FROM historico_garantias
+                GROUP BY garantia_id
+            ) h ON g.id = h.garantia_id
+            LEFT JOIN (
+                SELECT 
+                    garantia_id, 
+                    json_agg(anexos_garantias.* ORDER BY data_upload ASC) as anexos
+                FROM anexos_garantias
+                GROUP BY garantia_id
+            ) a ON g.id = a.garantia_id
+            ORDER BY g.data_criacao DESC;
         `;
         const result = await client.query(queryText);
         res.json(result.rows);
@@ -27,7 +40,7 @@ router.get('/garantias', async (req, res) => {
     }
 });
 
-// Rota GET /api/garantias/:id
+// Rota GET /api/garantias/:id (OTIMIZADA)
 router.get('/garantias/:id', async (req, res) => {
     const { id } = req.params;
     const client = await db.getLocalClient();
@@ -35,10 +48,24 @@ router.get('/garantias/:id', async (req, res) => {
         const queryText = `
             SELECT 
                 g.*, 
-                (SELECT json_agg(h) FROM historico_garantias h WHERE h.garantia_id = g.id) as historico,
-                (SELECT json_agg(a) FROM anexos_garantias a WHERE a.garantia_id = g.id) as anexos
+                COALESCE(h.historico, '[]'::json) as historico,
+                COALESCE(a.anexos, '[]'::json) as anexos
             FROM garantias g
-            WHERE g.id = $1
+            LEFT JOIN (
+                SELECT 
+                    garantia_id, 
+                    json_agg(historico_garantias.* ORDER BY data_ocorrencia DESC) as historico
+                FROM historico_garantias
+                GROUP BY garantia_id
+            ) h ON g.id = h.garantia_id
+            LEFT JOIN (
+                SELECT 
+                    garantia_id, 
+                    json_agg(anexos_garantias.* ORDER BY data_upload ASC) as anexos
+                FROM anexos_garantias
+                GROUP BY garantia_id
+            ) a ON g.id = a.garantia_id
+            WHERE g.id = $1;
         `;
         const garantiaResult = await client.query(queryText, [id]);
 
@@ -54,8 +81,8 @@ router.get('/garantias/:id', async (req, res) => {
     }
 });
 
-
-// Rota POST /api/garantias (CORRIGIDA)
+// ... (O resto do arquivo permanece o mesmo)
+// POST /api/garantias
 router.post('/garantias', upload.array('anexos', 10), async (req, res) => {
     const {
         erpFornecedorId, nomeFornecedor, emailFornecedor, produtos,
@@ -73,7 +100,6 @@ router.post('/garantias', upload.array('anexos', 10), async (req, res) => {
     try {
         await client.query('BEGIN');
 
-        // MODIFICADO: A query agora tem 10 colunas e 10 placeholders ($1 a $10)
         const garantiaQuery = `
             INSERT INTO garantias (
                 erp_fornecedor_id, nome_fornecedor, email_fornecedor, produtos, 
@@ -83,7 +109,6 @@ router.post('/garantias', upload.array('anexos', 10), async (req, res) => {
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             RETURNING id;
         `;
-        // MODIFICADO: O array de valores agora tem 10 itens para corresponder à query
         const garantiaValues = [
             erpFornecedorId, nomeFornecedor, emailFornecedor, produtos, 
             notaFiscal, descricao, tipoGarantia, nfsCompra, 
@@ -110,8 +135,8 @@ router.post('/garantias', upload.array('anexos', 10), async (req, res) => {
             const emailData = {
                 to: emailFornecedor,
                 cc: copiasEmail,
-                subject: `Abertura de ${tipoGarantia} - Nota Fiscal ${nfsCompra || 'N/A'}`,
-                html: `<p>Prezados,</p><p>Abrimos um processo de <b>${tipoGarantia}</b> para o(s) seguinte(s) produto(s):</p><ul><li>${produtos.replace(/; /g, '</li><li>')}</li></ul><p>Referente à Nota Interna: <b>${notaFiscal}</b></p><p>Referente à(s) NF(s) de Compra: <b>${nfsCompra || 'N/A'}</b></p><p><b>Descrição do problema:</b> ${descricao}</p><p>Por favor, verifiquem os anexos para mais detalhes.</p><p>Atenciosamente,<br>Equipa de Qualidade AC Acessórios.</p>`,
+                subject: `Abertura de Processo de ${tipoGarantia} - Nota Fiscal ${nfsCompra || 'N/A'}`,
+                html: `<p>Prezados,</p><p>Abrimos um processo de <b>${tipoGarantia}</b> para o(s) seguinte(s) produto(s):</p><ul><li>${produtos.replace(/; /g, '</li><li>')}</li></ul><p>Referente à(s) NF(s) de Compra: <b>${nfsCompra || 'N/A'}</b></p><p>Código de Controle Interno: <b>${notaFiscal}</b></p><p><b>Descrição do problema:</b> ${descricao}</p><p>Por favor, verifiquem os anexos para mais detalhes.</p><p>Atenciosamente,<br>Equipa de Qualidade AC Acessórios.</p>`,
             };
             
             await emailService.sendMail(emailData);
