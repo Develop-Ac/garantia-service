@@ -4,6 +4,7 @@
   "description": "Back-end para o aplicativo de gestão de garantias.",
   "main": "server.js",
   "dependencies": {
+    "axios": "^1.11.0",
     "cloudinary": "^2.7.0",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
