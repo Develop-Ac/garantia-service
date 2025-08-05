@@ -317,4 +317,56 @@ router.get('/dados-erp/venda/:ni', async (req, res) => {
     }
 });
 
+// NOVA ROTA: Webhook para receber e-mails processados pelo N8N
+router.post('/garantias/email-reply', async (req, res) => {
+    // Para segurança, verificamos uma chave secreta enviada pelo N8N
+    const n8nSecret = req.headers['x-n8n-secret'];
+    if (n8nSecret !== process.env.N8N_SECRET_KEY) {
+        console.warn('Tentativa de acesso não autorizado ao webhook do N8N.');
+        return res.status(403).send('Acesso não autorizado.');
+    }
+
+    const { ni_number, sender, email_body_html } = req.body;
+
+    if (!ni_number || !sender || !email_body_html) {
+        return res.status(400).json({ message: 'Dados incompletos (NI, remetente ou corpo do e-mail faltando).' });
+    }
+
+    const client = await db.getLocalClient();
+    try {
+        await client.query('BEGIN');
+
+        // 1. Encontra a garantia pela nota_interna (NI)
+        const garantiaResult = await client.query('SELECT id FROM garantias WHERE nota_interna = $1', [ni_number]);
+        
+        if (garantiaResult.rows.length === 0) {
+            console.warn(`Webhook N8N: Garantia com NI ${ni_number} não encontrada.`);
+            // Retorna 200 para o N8N não ficar tentando reenviar, mas loga o aviso.
+            return res.status(200).send('Garantia não encontrada, mas processo finalizado.');
+        }
+        const garantiaId = garantiaResult.rows[0].id;
+
+        // 2. Cria a descrição para o histórico
+        const descricao = `<b>De:</b> ${sender}<br><hr>${email_body_html}`;
+        
+        // 3. Insere no histórico
+        const historicoQuery = `
+            INSERT INTO historico_garantias (garantia_id, descricao, tipo_interacao)
+            VALUES ($1, $2, 'Resposta Recebida');
+        `;
+        await client.query(historicoQuery, [garantiaId, descricao]);
+
+        await client.query('COMMIT');
+        console.log(`Webhook N8N: Resposta de ${sender} adicionada à garantia da NI ${ni_number}.`);
+        res.status(200).send('Resposta recebida e registrada com sucesso.');
+
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Erro de banco de dados no webhook do N8N:', error);
+        res.status(500).json({ message: 'Erro interno ao processar a resposta do e-mail.' });
+    } finally {
+        client.release();
+    }
+});
+
 module.exports = router;
