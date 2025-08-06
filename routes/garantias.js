@@ -207,22 +207,48 @@ router.put('/garantias/:id/status', async (req, res) => {
 // Rota POST /api/garantias/:id/update
 router.post('/garantias/:id/update', upload.array('anexos', 10), async (req, res) => {
     const { id } = req.params;
-    const { descricao, tipo_interacao } = req.body;
+    const { descricao, tipo_interacao, enviar_email, destinatario } = req.body;
     const client = await db.getLocalClient();
 
     try {
         await client.query('BEGIN');
 
-        if (descricao) {
-            const historicoQuery = 'INSERT INTO historico_garantias (garantia_id, descricao, tipo_interacao) VALUES ($1, $2, $3)';
-            await client.query(historicoQuery, [id, descricao, tipo_interacao || 'Nota Interna']);
-        }
+        // Se for um e-mail, o corpo da descrição é o próprio e-mail.
+        // Se for uma nota interna, a descrição é o texto da nota.
+        const historicoDesc = descricao;
+        const historicoTipo = enviar_email === 'true' ? 'Resposta Enviada' : (tipo_interacao || 'Nota Interna');
 
+        // Insere a interação no histórico. Se for um e-mail enviado, já marca como visto.
+        const historicoQuery = `
+            INSERT INTO historico_garantias (garantia_id, descricao, tipo_interacao, foi_visto) 
+            VALUES ($1, $2, $3, $4)
+        `;
+        await client.query(historicoQuery, [id, historicoDesc, historicoTipo, enviar_email === 'true']);
+
+        // Adiciona novos anexos, se houver
         if (req.files && req.files.length > 0) {
             const anexoQuery = 'INSERT INTO anexos_garantias (garantia_id, nome_ficheiro, path_ficheiro) VALUES ($1, $2, $3)';
             for (const file of req.files) {
                 await client.query(anexoQuery, [id, file.originalname, file.path]);
             }
+        }
+
+        // Lógica de envio de e-mail
+        if (enviar_email === 'true' && destinatario) {
+            const garantiaInfo = await client.query('SELECT nota_interna FROM garantias WHERE id = $1', [id]);
+            const notaInterna = garantiaInfo.rows[0].nota_interna;
+
+            const emailData = {
+                to: destinatario,
+                cc: process.env.EMAIL_USER,
+                subject: `Re: Garantia - NI ${notaInterna}`,
+                html: `<p>${descricao.replace(/\n/g, '<br>')}</p>`,
+                attachments: req.files.map(file => ({
+                    filename: file.originalname,
+                    path: file.path
+                }))
+            };
+            await emailService.sendMail(emailData);
         }
 
         await client.query('COMMIT');
