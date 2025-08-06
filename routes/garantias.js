@@ -81,8 +81,7 @@ router.get('/garantias/:id', async (req, res) => {
     }
 });
 
-// ... (O resto do arquivo permanece o mesmo)
-// POST /api/garantias
+// Rota POST /api/garantias
 router.post('/garantias', upload.array('anexos', 10), async (req, res) => {
     const {
         erpFornecedorId, nomeFornecedor, emailFornecedor, produtos,
@@ -112,7 +111,7 @@ router.post('/garantias', upload.array('anexos', 10), async (req, res) => {
         const garantiaValues = [
             erpFornecedorId, nomeFornecedor, emailFornecedor, produtos, 
             notaFiscal, descricao, tipoGarantia, nfsCompra, 
-            'Aguardando Aprovação do Fornecedor', // status
+            'Aguardando Aprovação do Fornecedor',
             protocoloFornecedor
         ];
         const result = await client.query(garantiaQuery, garantiaValues);
@@ -136,10 +135,20 @@ router.post('/garantias', upload.array('anexos', 10), async (req, res) => {
                 to: emailFornecedor,
                 cc: copiasEmail,
                 subject: `Abertura de Processo de ${tipoGarantia} - Nota Fiscal ${nfsCompra || 'N/A'}`,
-                text: `Prezados,\n\nAbrimos um processo de ${tipoGarantia} para o(s) seguinte(s) produto(s):\n- ${produtos}\n\nReferente à(s) NF(s) de Compra: ${nfsCompra || 'N/A'}\n\nCódigo de Controle Interno: ${notaFiscal}\n\nDescrição do problema: ${descricao}\n\nPor favor, verifiquem os anexos para mais detalhes.\n\nAtenciosamente,\nEquipa de Qualidade AC Acessórios.`,
+                text: `Prezados,\n\nAbrimos um processo de garantia (${tipoGarantia}) para o(s) seguinte(s) produto(s):\n- ${produtos}\n\nReferente à(s) NF(s) de Compra: ${nfsCompra || 'N/A'}\n\nCódigo de Controle Interno: ${notaFiscal}\n\nDescrição do problema: ${descricao}\n\nPor favor, verifiquem os anexos para mais detalhes.\n\nAtenciosamente,\nEquipa de Qualidade AC Acessórios.`,
                 html: `<p>Prezados,</p><p>Abrimos um processo de <b>${tipoGarantia}</b> para o(s) seguinte(s) produto(s):</p><ul><li>${produtos.replace(/; /g, '</li><li>')}</li></ul><p>Referente à(s) NF(s) de Compra: <b>${nfsCompra || 'N/A'}</b></p><p>Código de Controle Interno: <b>${notaFiscal}</b></p><p><b>Descrição do problema:</b> ${descricao}</p><p>Por favor, verifiquem os anexos para mais detalhes.</p><p>Atenciosamente,<br>Equipa de Qualidade AC Acessórios.</p>`,
+                attachments: req.files.map(file => ({
+                    filename: file.originalname,
+                    path: file.path
+                }))
             };
-            await emailService.sendMail(emailData);
+            
+            if (process.env.DISABLE_EMAIL_SENDING !== 'true') {
+                await emailService.sendMail(emailData);
+            } else {
+                console.log('ENVIO DE E-MAIL DESATIVADO PARA TESTES.');
+            }
+
             historicoDesc = emailData.html;
             historicoTipo = 'Email Enviado';
         } else {
@@ -161,7 +170,7 @@ router.post('/garantias', upload.array('anexos', 10), async (req, res) => {
 
     } catch (error) {
         await client.query('ROLLBACK');
-        console.error('Erro ao criar garantia:', error);
+        console.error('Erro detalhado ao criar garantia:', error.stack || error);
         res.status(500).json({ message: 'Erro interno ao criar a garantia.' });
     } finally {
         client.release();
@@ -232,8 +241,7 @@ router.post('/garantias/:id/update', upload.array('anexos', 10), async (req, res
         if (enviar_email === 'true' && destinatario) {
             const garantiaInfo = await client.query('SELECT nota_interna FROM garantias WHERE id = $1', [id]);
             const notaInterna = garantiaInfo.rows[0].nota_interna;
-
-            // MODIFICADO: Busca o message_id do último e-mail recebido para responder na thread.
+            
             const lastMessageResult = await client.query(
                 `SELECT message_id FROM historico_garantias 
                  WHERE garantia_id = $1 AND tipo_interacao = 'Resposta Recebida' AND message_id IS NOT NULL 
@@ -248,11 +256,11 @@ router.post('/garantias/:id/update', upload.array('anexos', 10), async (req, res
                 cc: process.env.EMAIL_USER,
                 subject: `Re: Garantia - NI ${notaInterna}`,
                 html: `<p>${descricao.replace(/\n/g, '<br>')}</p>`,
+                text: descricao,
                 attachments: req.files.map(file => ({
                     filename: file.originalname,
                     path: file.path
                 })),
-                // Adiciona os headers para responder na thread
                 inReplyTo: lastMessageId,
                 references: lastMessageId
             };
@@ -270,7 +278,6 @@ router.post('/garantias/:id/update', upload.array('anexos', 10), async (req, res
         client.release();
     }
 });
-
 
 // Rota GET /dados-erp/venda/:ni
 router.get('/dados-erp/venda/:ni', async (req, res) => {
@@ -351,14 +358,14 @@ router.get('/dados-erp/venda/:ni', async (req, res) => {
     }
 });
 
-// NOVA ROTA: Webhook para receber e-mails processados pelo N8N
+// ROTA: Webhook para receber e-mails processados pelo N8N
 router.post('/garantias/email-reply', async (req, res) => {
     const n8nSecret = req.headers['x-n8n-secret'];
     if (n8nSecret !== process.env.N8N_SECRET_KEY) {
         return res.status(403).send('Acesso não autorizado.');
     }
 
-    const { ni_number, sender, email_body_html, message_id } = req.body; // message_id recebido
+    const { ni_number, sender, email_body_html, message_id } = req.body;
 
     if (!ni_number || !sender || !email_body_html) {
         return res.status(400).json({ message: 'Dados incompletos.' });
@@ -374,7 +381,6 @@ router.post('/garantias/email-reply', async (req, res) => {
         const garantiaId = garantiaResult.rows[0].id;
 
         const descricao = `<b>De:</b> ${sender}<br><hr>${email_body_html}`;
-        // MODIFICADO: Insere o message_id no histórico
         const historicoQuery = `
             INSERT INTO historico_garantias (garantia_id, descricao, tipo_interacao, foi_visto, message_id)
             VALUES ($1, $2, 'Resposta Recebida', FALSE, $3);
@@ -392,23 +398,22 @@ router.post('/garantias/email-reply', async (req, res) => {
         client.release();
     }
 });
-    // NOVA ROTA: Marcar interações de uma garantia como vistas
-    router.put('/garantias/:id/marcar-como-visto', async (req, res) => {
-        const { id } = req.params;
-        const client = await db.getLocalClient();
-            try {
-                await client.query('BEGIN');
-                // Marca a garantia principal como não tendo mais novas interações
-                await client.query('UPDATE garantias SET tem_nova_interacao = FALSE WHERE id = $1', [id]);
-                // Marca todos os históricos daquela garantia como vistos
-                await client.query('UPDATE historico_garantias SET foi_visto = TRUE WHERE garantia_id = $1', [id]);
-                await client.query('COMMIT');
-                res.status(200).json({ message: 'Interações marcadas como vistas.' });
-                } catch (error) {
-            await client.query('ROLLBACK');
-                console.error(`Erro ao marcar interações como vistas para a garantia ${id}:`, error);
-                res.status(500).json({ message: 'Erro interno do servidor.' });
-            } finally {
+
+// ROTA: Marcar interações de uma garantia como vistas
+router.put('/garantias/:id/marcar-como-visto', async (req, res) => {
+    const { id } = req.params;
+    const client = await db.getLocalClient();
+    try {
+        await client.query('BEGIN');
+        await client.query('UPDATE garantias SET tem_nova_interacao = FALSE WHERE id = $1', [id]);
+        await client.query('UPDATE historico_garantias SET foi_visto = TRUE WHERE garantia_id = $1', [id]);
+        await client.query('COMMIT');
+        res.status(200).json({ message: 'Interações marcadas como vistas.' });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error(`Erro ao marcar interações como vistas para a garantia ${id}:`, error);
+        res.status(500).json({ message: 'Erro interno do servidor.' });
+    } finally {
         client.release();
     }
 }); 
