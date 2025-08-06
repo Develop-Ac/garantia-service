@@ -253,7 +253,7 @@ router.post('/garantias/:id/update', upload.array('anexos', 10), async (req, res
 
             const emailData = {
                 to: destinatario,
-                cc: process.env.EMAIL_USER,
+                // MODIFICADO: A linha 'cc' foi removida para não enviar cópia para si mesmo.
                 subject: `Re: Garantia - NI ${notaInterna}`,
                 html: `<p>${descricao.replace(/\n/g, '<br>')}</p>`,
                 text: descricao,
@@ -272,7 +272,6 @@ router.post('/garantias/:id/update', upload.array('anexos', 10), async (req, res
 
     } catch (error) {
         await client.query('ROLLBACK');
-        // MODIFICADO: Adicionado log de erro detalhado.
         console.error(`Erro detalhado ao atualizar a garantia ${id}:`, error.stack || error);
         res.status(500).json({ message: 'Erro interno ao atualizar a garantia.' });
     } finally {
