@@ -136,9 +136,9 @@ router.post('/garantias', upload.array('anexos', 10), async (req, res) => {
                 to: emailFornecedor,
                 cc: copiasEmail,
                 subject: `Abertura de Processo de ${tipoGarantia} - Nota Fiscal ${nfsCompra || 'N/A'}`,
+                text: `Prezados,\n\nAbrimos um processo de ${tipoGarantia} para o(s) seguinte(s) produto(s):\n- ${produtos}\n\nReferente à(s) NF(s) de Compra: ${nfsCompra || 'N/A'}\n\nCódigo de Controle Interno: ${notaFiscal}\n\nDescrição do problema: ${descricao}\n\nPor favor, verifiquem os anexos para mais detalhes.\n\nAtenciosamente,\nEquipa de Qualidade AC Acessórios.`,
                 html: `<p>Prezados,</p><p>Abrimos um processo de <b>${tipoGarantia}</b> para o(s) seguinte(s) produto(s):</p><ul><li>${produtos.replace(/; /g, '</li><li>')}</li></ul><p>Referente à(s) NF(s) de Compra: <b>${nfsCompra || 'N/A'}</b></p><p>Código de Controle Interno: <b>${notaFiscal}</b></p><p><b>Descrição do problema:</b> ${descricao}</p><p>Por favor, verifiquem os anexos para mais detalhes.</p><p>Atenciosamente,<br>Equipa de Qualidade AC Acessórios.</p>`,
             };
-            
             await emailService.sendMail(emailData);
             historicoDesc = emailData.html;
             historicoTipo = 'Email Enviado';
@@ -213,19 +213,15 @@ router.post('/garantias/:id/update', upload.array('anexos', 10), async (req, res
     try {
         await client.query('BEGIN');
 
-        // Se for um e-mail, o corpo da descrição é o próprio e-mail.
-        // Se for uma nota interna, a descrição é o texto da nota.
         const historicoDesc = descricao;
         const historicoTipo = enviar_email === 'true' ? 'Resposta Enviada' : (tipo_interacao || 'Nota Interna');
 
-        // Insere a interação no histórico. Se for um e-mail enviado, já marca como visto.
         const historicoQuery = `
             INSERT INTO historico_garantias (garantia_id, descricao, tipo_interacao, foi_visto) 
             VALUES ($1, $2, $3, $4)
         `;
         await client.query(historicoQuery, [id, historicoDesc, historicoTipo, enviar_email === 'true']);
 
-        // Adiciona novos anexos, se houver
         if (req.files && req.files.length > 0) {
             const anexoQuery = 'INSERT INTO anexos_garantias (garantia_id, nome_ficheiro, path_ficheiro) VALUES ($1, $2, $3)';
             for (const file of req.files) {
@@ -233,10 +229,19 @@ router.post('/garantias/:id/update', upload.array('anexos', 10), async (req, res
             }
         }
 
-        // Lógica de envio de e-mail
         if (enviar_email === 'true' && destinatario) {
             const garantiaInfo = await client.query('SELECT nota_interna FROM garantias WHERE id = $1', [id]);
             const notaInterna = garantiaInfo.rows[0].nota_interna;
+
+            // MODIFICADO: Busca o message_id do último e-mail recebido para responder na thread.
+            const lastMessageResult = await client.query(
+                `SELECT message_id FROM historico_garantias 
+                 WHERE garantia_id = $1 AND tipo_interacao = 'Resposta Recebida' AND message_id IS NOT NULL 
+                 ORDER BY data_ocorrencia DESC LIMIT 1`,
+                [id]
+            );
+
+            const lastMessageId = lastMessageResult.rows.length > 0 ? lastMessageResult.rows[0].message_id : null;
 
             const emailData = {
                 to: destinatario,
@@ -246,7 +251,10 @@ router.post('/garantias/:id/update', upload.array('anexos', 10), async (req, res
                 attachments: req.files.map(file => ({
                     filename: file.originalname,
                     path: file.path
-                }))
+                })),
+                // Adiciona os headers para responder na thread
+                inReplyTo: lastMessageId,
+                references: lastMessageId
             };
             await emailService.sendMail(emailData);
         }
@@ -345,48 +353,41 @@ router.get('/dados-erp/venda/:ni', async (req, res) => {
 
 // NOVA ROTA: Webhook para receber e-mails processados pelo N8N
 router.post('/garantias/email-reply', async (req, res) => {
-    // Para segurança, verificamos uma chave secreta enviada pelo N8N
     const n8nSecret = req.headers['x-n8n-secret'];
     if (n8nSecret !== process.env.N8N_SECRET_KEY) {
-        console.warn('Tentativa de acesso não autorizado ao webhook do N8N.');
         return res.status(403).send('Acesso não autorizado.');
     }
 
-    const { ni_number, sender, email_body_html } = req.body;
+    const { ni_number, sender, email_body_html, message_id } = req.body; // message_id recebido
 
     if (!ni_number || !sender || !email_body_html) {
-        return res.status(400).json({ message: 'Dados incompletos (NI, remetente ou corpo do e-mail faltando).' });
+        return res.status(400).json({ message: 'Dados incompletos.' });
     }
 
     const client = await db.getLocalClient();
     try {
         await client.query('BEGIN');
-
-        // 1. Encontra a garantia
         const garantiaResult = await client.query('SELECT id FROM garantias WHERE nota_interna = $1', [ni_number]);
         if (garantiaResult.rows.length === 0) {
-            return res.status(200).send('Garantia não encontrada, mas processo finalizado.');
+            return res.status(200).send('Garantia não encontrada.');
         }
         const garantiaId = garantiaResult.rows[0].id;
 
-        // 2. Insere no histórico, marcando como NÃO VISTO
-        const historicoQuery = `
-            INSERT INTO historico_garantias (garantia_id, descricao, tipo_interacao, foi_visto)
-            VALUES ($1, $2, 'Resposta Recebida', FALSE);
-        `;
         const descricao = `<b>De:</b> ${sender}<br><hr>${email_body_html}`;
-        await client.query(historicoQuery, [garantiaId, descricao]);
+        // MODIFICADO: Insere o message_id no histórico
+        const historicoQuery = `
+            INSERT INTO historico_garantias (garantia_id, descricao, tipo_interacao, foi_visto, message_id)
+            VALUES ($1, $2, 'Resposta Recebida', FALSE, $3);
+        `;
+        await client.query(historicoQuery, [garantiaId, descricao, message_id]);
 
-        // 3. Marca a garantia principal como tendo uma nova interação
         await client.query('UPDATE garantias SET tem_nova_interacao = TRUE WHERE id = $1', [garantiaId]);
-
         await client.query('COMMIT');
         res.status(200).send('Resposta recebida e registrada com sucesso.');
-
     } catch (error) {
         await client.query('ROLLBACK');
         console.error('Erro de banco de dados no webhook do N8N:', error);
-        res.status(500).json({ message: 'Erro interno ao processar a resposta do e-mail.' });
+        res.status(500).json({ message: 'Erro interno ao processar a resposta.' });
     } finally {
         client.release();
     }
