@@ -272,7 +272,8 @@ router.post('/garantias/:id/update', upload.array('anexos', 10), async (req, res
 
     } catch (error) {
         await client.query('ROLLBACK');
-        console.error(`Erro ao atualizar a garantia ${id}:`, error);
+        // MODIFICADO: Adicionado log de erro detalhado.
+        console.error(`Erro detalhado ao atualizar a garantia ${id}:`, error.stack || error);
         res.status(500).json({ message: 'Erro interno ao atualizar a garantia.' });
     } finally {
         client.release();
