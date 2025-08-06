@@ -336,28 +336,25 @@ router.post('/garantias/email-reply', async (req, res) => {
     try {
         await client.query('BEGIN');
 
-        // 1. Encontra a garantia pela nota_interna (NI)
+        // 1. Encontra a garantia
         const garantiaResult = await client.query('SELECT id FROM garantias WHERE nota_interna = $1', [ni_number]);
-        
         if (garantiaResult.rows.length === 0) {
-            console.warn(`Webhook N8N: Garantia com NI ${ni_number} não encontrada.`);
-            // Retorna 200 para o N8N não ficar tentando reenviar, mas loga o aviso.
             return res.status(200).send('Garantia não encontrada, mas processo finalizado.');
         }
         const garantiaId = garantiaResult.rows[0].id;
 
-        // 2. Cria a descrição para o histórico
-        const descricao = `<b>De:</b> ${sender}<br><hr>${email_body_html}`;
-        
-        // 3. Insere no histórico
+        // 2. Insere no histórico, marcando como NÃO VISTO
         const historicoQuery = `
-            INSERT INTO historico_garantias (garantia_id, descricao, tipo_interacao)
-            VALUES ($1, $2, 'Resposta Recebida');
+            INSERT INTO historico_garantias (garantia_id, descricao, tipo_interacao, foi_visto)
+            VALUES ($1, $2, 'Resposta Recebida', FALSE);
         `;
+        const descricao = `<b>De:</b> ${sender}<br><hr>${email_body_html}`;
         await client.query(historicoQuery, [garantiaId, descricao]);
 
+        // 3. Marca a garantia principal como tendo uma nova interação
+        await client.query('UPDATE garantias SET tem_nova_interacao = TRUE WHERE id = $1', [garantiaId]);
+
         await client.query('COMMIT');
-        console.log(`Webhook N8N: Resposta de ${sender} adicionada à garantia da NI ${ni_number}.`);
         res.status(200).send('Resposta recebida e registrada com sucesso.');
 
     } catch (error) {
@@ -368,5 +365,25 @@ router.post('/garantias/email-reply', async (req, res) => {
         client.release();
     }
 });
+    // NOVA ROTA: Marcar interações de uma garantia como vistas
+    router.put('/garantias/:id/marcar-como-visto', async (req, res) => {
+        const { id } = req.params;
+        const client = await db.getLocalClient();
+            try {
+                await client.query('BEGIN');
+                // Marca a garantia principal como não tendo mais novas interações
+                await client.query('UPDATE garantias SET tem_nova_interacao = FALSE WHERE id = $1', [id]);
+                // Marca todos os históricos daquela garantia como vistos
+                await client.query('UPDATE historico_garantias SET foi_visto = TRUE WHERE garantia_id = $1', [id]);
+                await client.query('COMMIT');
+                res.status(200).json({ message: 'Interações marcadas como vistas.' });
+                } catch (error) {
+            await client.query('ROLLBACK');
+                console.error(`Erro ao marcar interações como vistas para a garantia ${id}:`, error);
+                res.status(500).json({ message: 'Erro interno do servidor.' });
+            } finally {
+        client.release();
+    }
+}); 
 
 module.exports = router;
