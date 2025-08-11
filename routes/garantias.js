@@ -119,7 +119,7 @@ router.get('/garantias', async (req, res) => {
   try {
     const queryText = `
       SELECT 
-        g., 
+        g.*, 
         COALESCE(h.historico, '[]'::json) as historico,
         COALESCE(a.anexos, '[]'::json) as anexos
       FROM garantias g
