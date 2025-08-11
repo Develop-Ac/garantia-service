@@ -143,13 +143,10 @@ router.post('/garantias', upload.array('anexos', 10), async (req, res) => {
                     path: file.path
                 }))
             };
-            
-            if (process.env.DISABLE_EMAIL_SENDING !== 'true') {
-                await emailService.sendMail(emailData);
-            } else {
-                console.log('ENVIO DE E-MAIL DESATIVADO PARA TESTES.');
-            }
-
+            // MODIFICADO: Captura a resposta do envio de e-mail
+            const info = await emailService.sendMail(emailData);
+            messageIdParaSalvar = info.messageId; // Guarda o ID da mensagem enviada
+          
             historicoDesc = emailData.html;
             historicoTipo = 'Email Enviado';
         } else {
@@ -157,10 +154,10 @@ router.post('/garantias', upload.array('anexos', 10), async (req, res) => {
         }
 
         const historicoQuery = `
-            INSERT INTO historico_garantias (garantia_id, descricao, tipo_interacao)
-            VALUES ($1, $2, $3);
+            INSERT INTO historico_garantias (garantia_id, descricao, tipo_interacao, message_id)
+            VALUES ($1, $2, $3, $4);
         `;
-        await client.query(historicoQuery, [novaGarantiaId, historicoDesc, historicoTipo]);
+        await client.query(historicoQuery, [novaGarantiaId, historicoDesc, historicoTipo, messageIdParaSalvar]);
 
         await client.query('COMMIT');
         
@@ -214,7 +211,7 @@ router.put('/garantias/:id/status', async (req, res) => {
     }
 });
 
-// Rota POST /api/garantias/:id/update
+// Rota POST /api/garantias/:id/update (MODIFICADA)
 router.post('/garantias/:id/update', upload.array('anexos', 10), async (req, res) => {
     const { id } = req.params;
     const { descricao, tipo_interacao, enviar_email, destinatario } = req.body;
@@ -223,42 +220,27 @@ router.post('/garantias/:id/update', upload.array('anexos', 10), async (req, res
     try {
         await client.query('BEGIN');
 
-        const historicoDesc = descricao;
-        const historicoTipo = enviar_email === 'true' ? 'Resposta Enviada' : (tipo_interacao || 'Nota Interna');
-
-        const historicoQuery = `
-            INSERT INTO historico_garantias (garantia_id, descricao, tipo_interacao, foi_visto) 
-            VALUES ($1, $2, $3, $4)
-        `;
-        await client.query(historicoQuery, [id, historicoDesc, historicoTipo, enviar_email === 'true']);
-
-        if (req.files && req.files.length > 0) {
-            const anexoQuery = 'INSERT INTO anexos_garantias (garantia_id, nome_ficheiro, path_ficheiro) VALUES ($1, $2, $3)';
-            for (const file of req.files) {
-                await client.query(anexoQuery, [id, file.originalname, file.path]);
-            }
-        }
-
+        let messageIdParaSalvar = null;
+        
         if (enviar_email === 'true') {
             const garantiaInfoResult = await client.query('SELECT nota_interna, email_fornecedor, copias_email FROM garantias WHERE id = $1', [id]);
             const garantiaInfo = garantiaInfoResult.rows[0];
             const notaInterna = garantiaInfo.nota_interna;
             const emailPrincipal = garantiaInfo.email_fornecedor;
             const copiasEmail = garantiaInfo.copias_email;
-
             const destinatarioFinal = destinatario || emailPrincipal;
 
             if (!destinatarioFinal) {
                 throw new Error('O e-mail do destinatário não foi encontrado.');
             }
             
+            // MODIFICADO: Procura pelo message_id mais recente, seja enviado ou recebido.
             const lastMessageResult = await client.query(
                 `SELECT message_id FROM historico_garantias 
-                 WHERE garantia_id = $1 AND tipo_interacao = 'Resposta Recebida' AND message_id IS NOT NULL 
+                 WHERE garantia_id = $1 AND message_id IS NOT NULL 
                  ORDER BY data_ocorrencia DESC LIMIT 1`,
                 [id]
             );
-
             const lastMessageId = lastMessageResult.rows.length > 0 ? lastMessageResult.rows[0].message_id : null;
             
             const emailHtmlComAssinatura = `<p>${descricao.replace(/\n/g, '<br>')}</p><br><p>Atenciosamente,<br>Equipa de Qualidade<br>AC Acessórios.</p>`;
@@ -270,19 +252,32 @@ router.post('/garantias/:id/update', upload.array('anexos', 10), async (req, res
                 subject: `Re: Garantia - NI ${notaInterna}`,
                 html: emailHtmlComAssinatura,
                 text: emailTextComAssinatura,
-                attachments: req.files.map(file => ({
-                    filename: file.originalname,
-                    path: file.path
-                })),
+                attachments: req.files.map(file => ({ filename: file.originalname, path: file.path })),
             };
 
-            // MODIFICADO: Adiciona os cabeçalhos de resposta apenas se um e-mail anterior existir.
             if (lastMessageId) {
                 emailData.inReplyTo = lastMessageId;
                 emailData.references = lastMessageId;
             }
 
-            await emailService.sendMail(emailData);
+            const info = await emailService.sendMail(emailData);
+            messageIdParaSalvar = info.messageId; // Guarda o ID da resposta
+        }
+
+        const historicoDesc = descricao;
+        const historicoTipo = enviar_email === 'true' ? 'Resposta Enviada' : (tipo_interacao || 'Nota Interna');
+
+        const historicoQuery = `
+            INSERT INTO historico_garantias (garantia_id, descricao, tipo_interacao, foi_visto, message_id) 
+            VALUES ($1, $2, $3, $4, $5)
+        `;
+        await client.query(historicoQuery, [id, historicoDesc, historicoTipo, enviar_email === 'true', messageIdParaSalvar]);
+
+        if (req.files && req.files.length > 0) {
+            const anexoQuery = 'INSERT INTO anexos_garantias (garantia_id, nome_ficheiro, path_ficheiro) VALUES ($1, $2, $3)';
+            for (const file of req.files) {
+                await client.query(anexoQuery, [id, file.originalname, file.path]);
+            }
         }
 
         await client.query('COMMIT');
