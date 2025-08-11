@@ -269,14 +269,19 @@ router.post('/garantias/:id/update', upload.array('anexos', 10), async (req, res
                 cc: copiasEmail,
                 subject: `Re: Garantia - NI ${notaInterna}`,
                 html: emailHtmlComAssinatura,
-                text: emailTextComAssinatura, // CORRIGIDO: Adicionado o corpo em texto simples.
+                text: emailTextComAssinatura,
                 attachments: req.files.map(file => ({
                     filename: file.originalname,
                     path: file.path
                 })),
-                inReplyTo: lastMessageId,
-                references: lastMessageId
             };
+
+            // MODIFICADO: Adiciona os cabeçalhos de resposta apenas se um e-mail anterior existir.
+            if (lastMessageId) {
+                emailData.inReplyTo = lastMessageId;
+                emailData.references = lastMessageId;
+            }
+
             await emailService.sendMail(emailData);
         }
 
