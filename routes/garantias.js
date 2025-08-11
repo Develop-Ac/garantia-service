@@ -387,11 +387,22 @@ router.post('/garantias/email-reply', async (req, res) => {
     const client = await db.getLocalClient();
     try {
         await client.query('BEGIN');
+
         const garantiaResult = await client.query('SELECT id FROM garantias WHERE nota_interna = $1', [ni_number]);
         if (garantiaResult.rows.length === 0) {
             return res.status(200).send('Garantia não encontrada.');
         }
         const garantiaId = garantiaResult.rows[0].id;
+
+        // NOVO: Verifica se um e-mail com este message_id já existe no histórico.
+        const checkDuplicateQuery = 'SELECT id FROM historico_garantias WHERE message_id = $1';
+        const duplicateResult = await client.query(checkDuplicateQuery, [message_id]);
+
+        if (duplicateResult.rows.length > 0) {
+            console.log(`Webhook N8N: E-mail duplicado com message_id ${message_id} ignorado.`);
+            await client.query('COMMIT'); // Finaliza a transação mesmo assim
+            return res.status(200).send('E-mail duplicado ignorado.');
+        }
 
         const descricao = `<b>De:</b> ${sender}<br><hr>${email_body_html}`;
         const historicoQuery = `
