@@ -133,7 +133,7 @@ router.post('/garantias', upload.array('anexos', 10), async (req, res) => {
 
         if (outrosMeios !== 'true') {
             const emailData = {
-                to: emailFornecedor,                
+                to: emailFornecedor,
                 cc: copiasEmail,
                 subject: `Abertura de Processo de ${tipoGarantia} - Nota Fiscal ${nfsCompra || 'N/A'}`,
                 text: `Prezados,\n\nAbrimos um processo de garantia (${tipoGarantia}) para o(s) seguinte(s) produto(s):\n- ${produtos}\n\nReferente à(s) NF(s) de Compra: ${nfsCompra || 'N/A'}\n\nCódigo de Controle Interno: ${notaFiscal}\n\nDescrição do problema: ${descricao}\n\nPor favor, verifiquem os anexos para mais detalhes.\n\nAtenciosamente,\nEquipa de Qualidade AC Acessórios.`,
@@ -217,7 +217,6 @@ router.put('/garantias/:id/status', async (req, res) => {
 // Rota POST /api/garantias/:id/update
 router.post('/garantias/:id/update', upload.array('anexos', 10), async (req, res) => {
     const { id } = req.params;
-    // MODIFICADO: Adicionado 'destinatario' para ser lido do corpo da requisição.
     const { descricao, tipo_interacao, enviar_email, destinatario } = req.body;
     const client = await db.getLocalClient();
 
@@ -241,15 +240,17 @@ router.post('/garantias/:id/update', upload.array('anexos', 10), async (req, res
         }
 
         if (enviar_email === 'true') {
-            // MODIFICADO: A verificação agora usa o 'destinatario' recebido do frontend.
-            if (!destinatario) {
-                throw new Error('O e-mail do destinatário não foi fornecido.');
-            }
-            
-            const garantiaInfoResult = await client.query('SELECT nota_interna, copias_email FROM garantias WHERE id = $1', [id]);
+            const garantiaInfoResult = await client.query('SELECT nota_interna, email_fornecedor, copias_email FROM garantias WHERE id = $1', [id]);
             const garantiaInfo = garantiaInfoResult.rows[0];
             const notaInterna = garantiaInfo.nota_interna;
+            const emailPrincipal = garantiaInfo.email_fornecedor;
             const copiasEmail = garantiaInfo.copias_email;
+
+            const destinatarioFinal = destinatario || emailPrincipal;
+
+            if (!destinatarioFinal) {
+                throw new Error('O e-mail do destinatário não foi encontrado.');
+            }
             
             const lastMessageResult = await client.query(
                 `SELECT message_id FROM historico_garantias 
@@ -264,11 +265,11 @@ router.post('/garantias/:id/update', upload.array('anexos', 10), async (req, res
             const emailTextComAssinatura = `${descricao}\n\nAtenciosamente,\nEquipa de Qualidade\nAC Acessórios.`;
 
             const emailData = {
-                to: destinatario,
+                to: destinatarioFinal,
                 cc: copiasEmail,
                 subject: `Re: Garantia - NI ${notaInterna}`,
                 html: emailHtmlComAssinatura,
-                text: emailTextComAssinatura,
+                text: emailTextComAssinatura, // CORRIGIDO: Adicionado o corpo em texto simples.
                 attachments: req.files.map(file => ({
                     filename: file.originalname,
                     path: file.path
