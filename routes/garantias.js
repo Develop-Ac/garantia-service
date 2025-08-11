@@ -134,7 +134,6 @@ router.post('/garantias', upload.array('anexos', 10), async (req, res) => {
         if (outrosMeios !== 'true') {
             const emailData = {
                 to: emailFornecedor,
-                cc: copiasEmail,
                 subject: `Abertura de Processo de ${tipoGarantia} - Nota Fiscal ${nfsCompra || 'N/A'}`,
                 text: `Prezados,\n\nAbrimos um processo de garantia (${tipoGarantia}) para o(s) seguinte(s) produto(s):\n- ${produtos}\n\nReferente à(s) NF(s) de Compra: ${nfsCompra || 'N/A'}\n\nCódigo de Controle Interno: ${notaFiscal}\n\nDescrição do problema: ${descricao}\n\nPor favor, verifiquem os anexos para mais detalhes.\n\nAtenciosamente,\nEquipa de Qualidade AC Acessórios.`,
                 html: `<p>Prezados,</p><p>Abrimos um processo de <b>${tipoGarantia}</b> para o(s) seguinte(s) produto(s):</p><ul><li>${produtos.replace(/; /g, '</li><li>')}</li></ul><p>Referente à(s) NF(s) de Compra: <b>${nfsCompra || 'N/A'}</b></p><p>Código de Controle Interno: <b>${notaFiscal}</b></p><p><b>Descrição do problema:</b> ${descricao}</p><p>Por favor, verifiquem os anexos para mais detalhes.</p><p>Atenciosamente,<br>Equipa de Qualidade AC Acessórios.</p>`,
