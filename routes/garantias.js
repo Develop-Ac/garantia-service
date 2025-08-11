@@ -82,13 +82,88 @@ router.get('/garantias/:id', async (req, res) => {
 });
 
 // Rota POST /api/garantias
+router.get('/garantias', async (req, res) => {
+    const client = await db.getLocalClient();
+    try {
+        const queryText = `
+            SELECT 
+                g.*, 
+                COALESCE(h.historico, '[]'::json) as historico,
+                COALESCE(a.anexos, '[]'::json) as anexos
+            FROM garantias g
+            LEFT JOIN (
+                SELECT 
+                    garantia_id, 
+                    json_agg(historico_garantias.* ORDER BY data_ocorrencia DESC) as historico
+                FROM historico_garantias
+                GROUP BY garantia_id
+            ) h ON g.id = h.garantia_id
+            LEFT JOIN (
+                SELECT 
+                    garantia_id, 
+                    json_agg(anexos_garantias.* ORDER BY data_upload ASC) as anexos
+                FROM anexos_garantias
+                GROUP BY garantia_id
+            ) a ON g.id = a.garantia_id
+            ORDER BY g.data_criacao DESC;
+        `;
+        const result = await client.query(queryText);
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Erro ao buscar garantias:', error);
+        res.status(500).json({ message: 'Erro interno ao buscar as garantias.' });
+    } finally {
+        client.release();
+    }
+});
+
+// Rota GET /api/garantias/:id (OTIMIZADA)
+router.get('/garantias/:id', async (req, res) => {
+    const { id } = req.params;
+    const client = await db.getLocalClient();
+    try {
+        const queryText = `
+            SELECT 
+                g.*, 
+                COALESCE(h.historico, '[]'::json) as historico,
+                COALESCE(a.anexos, '[]'::json) as anexos
+            FROM garantias g
+            LEFT JOIN (
+                SELECT 
+                    garantia_id, 
+                    json_agg(historico_garantias.* ORDER BY data_ocorrencia DESC) as historico
+                FROM historico_garantias
+                GROUP BY garantia_id
+            ) h ON g.id = h.garantia_id
+            LEFT JOIN (
+                SELECT 
+                    garantia_id, 
+                    json_agg(anexos_garantias.* ORDER BY data_upload ASC) as anexos
+                FROM anexos_garantias
+                GROUP BY garantia_id
+            ) a ON g.id = a.garantia_id
+            WHERE g.id = $1;
+        `;
+        const garantiaResult = await client.query(queryText, [id]);
+
+        if (garantiaResult.rows.length === 0) {
+            return res.status(404).json({ message: 'Garantia não encontrada.' });
+        }
+        res.json(garantiaResult.rows[0]);
+    } catch (error) {
+        console.error(`Erro ao buscar detalhes da garantia ${id}:`, error);
+        res.status(500).json({ message: 'Erro interno ao buscar detalhes da garantia.' });
+    } finally {
+        client.release();
+    }
+});
+
+// Rota POST /api/garantias
 router.post('/garantias', upload.array('anexos', 10), async (req, res) => {
     const {
         erpFornecedorId, nomeFornecedor, emailFornecedor, produtos,
-        notaFiscal, // Usado como nota_interna
-        descricao, copiasEmail, tipoGarantia, nfsCompra,
-        outrosMeios,
-        protocoloFornecedor
+        notaFiscal, descricao, copiasEmail, tipoGarantia, nfsCompra,
+        outrosMeios, protocoloFornecedor
     } = req.body;
 
     if (!erpFornecedorId || !produtos || !notaFiscal || !descricao || !tipoGarantia) {
@@ -111,18 +186,13 @@ router.post('/garantias', upload.array('anexos', 10), async (req, res) => {
         const garantiaValues = [
             erpFornecedorId, nomeFornecedor, emailFornecedor, produtos, 
             notaFiscal, descricao, tipoGarantia, nfsCompra, 
-            'Aguardando Aprovação do Fornecedor',
-            protocoloFornecedor,
-            copiasEmail // Salva os e-mails em cópia
+            'Aguardando Aprovação do Fornecedor', protocoloFornecedor, copiasEmail
         ];
         const result = await client.query(garantiaQuery, garantiaValues);
         const novaGarantiaId = result.rows[0].id;
 
         if (req.files && req.files.length > 0) {
-            const anexoQuery = `
-                INSERT INTO anexos_garantias (garantia_id, nome_ficheiro, path_ficheiro)
-                VALUES ($1, $2, $3);
-            `;
+            const anexoQuery = `INSERT INTO anexos_garantias (garantia_id, nome_ficheiro, path_ficheiro) VALUES ($1, $2, $3);`;
             for (const file of req.files) {
                 await client.query(anexoQuery, [novaGarantiaId, file.originalname, file.path]);
             }
@@ -130,26 +200,25 @@ router.post('/garantias', upload.array('anexos', 10), async (req, res) => {
         
         let historicoDesc;
         let historicoTipo = 'Criação do Processo';
+        let messageIdParaSalvar = null;
 
         if (outrosMeios !== 'true') {
             const emailData = {
                 to: emailFornecedor,
+                cc: copiasEmail,
                 subject: `Abertura de Processo de ${tipoGarantia} - Nota Fiscal ${nfsCompra || 'N/A'}`,
-                text: `Prezados,\n\nAbrimos um processo de garantia (${tipoGarantia}) para o(s) seguinte(s) produto(s):\n- ${produtos}\n\nReferente à(s) NF(s) de Compra: ${nfsCompra || 'N/A'}\n\nCódigo de Controle Interno: ${notaFiscal}\n\nDescrição do problema: ${descricao}\n\nPor favor, verifiquem os anexos para mais detalhes.\n\nAtenciosamente,\nEquipa de Qualidade AC Acessórios.`,
-                html: `<p>Prezados,</p><p>Abrimos um processo de <b>${tipoGarantia}</b> para o(s) seguinte(s) produto(s):</p><ul><li>${produtos.replace(/; /g, '</li><li>')}</li></ul><p>Referente à(s) NF(s) de Compra: <b>${nfsCompra || 'N/A'}</b></p><p>Código de Controle Interno: <b>${notaFiscal}</b></p><p><b>Descrição do problema:</b> ${descricao}</p><p>Por favor, verifiquem os anexos para mais detalhes.</p><p>Atenciosamente,<br>Equipa de Qualidade AC Acessórios.</p>`,
-                attachments: req.files.map(file => ({
-                    filename: file.originalname,
-                    path: file.path
-                }))
+                text: `Prezados,\n\n...`, // Corpo do e-mail
+                html: `<p>Prezados,</p>...`, // Corpo do e-mail em HTML
+                attachments: req.files.map(file => ({ filename: file.originalname, path: file.path }))
             };
-            // MODIFICADO: Captura a resposta do envio de e-mail
+            
             const info = await emailService.sendMail(emailData);
-            messageIdParaSalvar = info.messageId; // Guarda o ID da mensagem enviada
-          
+            messageIdParaSalvar = info.messageId;
+
             historicoDesc = emailData.html;
             historicoTipo = 'Email Enviado';
         } else {
-            historicoDesc = `Processo de garantia criado manualmente (aberto por outros meios). Protocolo: ${protocoloFornecedor || 'N/A'}`;
+            historicoDesc = `Processo de garantia criado manualmente. Protocolo: ${protocoloFornecedor || 'N/A'}`;
         }
 
         const historicoQuery = `
@@ -159,52 +228,12 @@ router.post('/garantias', upload.array('anexos', 10), async (req, res) => {
         await client.query(historicoQuery, [novaGarantiaId, historicoDesc, historicoTipo, messageIdParaSalvar]);
 
         await client.query('COMMIT');
-        
-        res.status(201).json({
-            message: 'Garantia criada com sucesso!',
-            garantiaId: novaGarantiaId,
-        });
+        res.status(201).json({ message: 'Garantia criada com sucesso!', garantiaId: novaGarantiaId });
 
     } catch (error) {
         await client.query('ROLLBACK');
         console.error('Erro detalhado ao criar garantia:', error.stack || error);
         res.status(500).json({ message: 'Erro interno ao criar a garantia.' });
-    } finally {
-        client.release();
-    }
-});
-
-// Rota PUT /api/garantias/:id/status
-router.put('/garantias/:id/status', async (req, res) => {
-    const client = await db.getLocalClient();
-    try {
-        await client.query('BEGIN');
-        const { id } = req.params;
-        const { novo_status, ...extraData } = req.body;
-
-        const fields = Object.keys(extraData);
-        const setClauses = fields.map((field, index) => `${field} = $${index + 2}`).join(', ');
-        const values = [novo_status, ...fields.map(field => extraData[field]), id];
-
-        let updateQuery = `UPDATE garantias SET status = $1`;
-        if (setClauses) {
-            updateQuery += `, ${setClauses}`;
-        }
-        updateQuery += ` WHERE id = $${values.length};`;
-        
-        await client.query(updateQuery, values);
-
-        const historicoDesc = `Status alterado para: ${novo_status}.`;
-        const historicoQuery = 'INSERT INTO historico_garantias (garantia_id, descricao, tipo_interacao) VALUES ($1, $2, $3)';
-        await client.query(historicoQuery, [id, historicoDesc, 'Atualização de Status']);
-
-        await client.query('COMMIT');
-        res.status(200).json({ message: `Status da garantia ${id} atualizado para ${novo_status}.` });
-
-    } catch (err) {
-        await client.query('ROLLBACK');
-        console.error(`Erro ao atualizar status da garantia ${req.params.id}:`, err);
-        res.status(500).json({ error: 'Erro interno do servidor' });
     } finally {
         client.release();
     }
@@ -233,15 +262,26 @@ router.post('/garantias/:id/update', upload.array('anexos', 10), async (req, res
                 throw new Error('O e-mail do destinatário não foi encontrado.');
             }
             
-            // MODIFICADO: Procura pelo message_id mais recente, seja enviado ou recebido.
-            const lastMessageResult = await client.query(
-                `SELECT message_id FROM historico_garantias 
-                 WHERE garantia_id = $1 AND message_id IS NOT NULL 
-                 ORDER BY data_ocorrencia DESC LIMIT 1`,
+            // MODIFICADO: Busca TODA a cadeia de message_ids em ordem cronológica.
+            const refsResult = await client.query(
+                `SELECT message_id FROM historico_garantias
+                 WHERE garantia_id = $1 AND message_id IS NOT NULL
+                 ORDER BY data_ocorrencia ASC`,
                 [id]
             );
-            const lastMessageId = lastMessageResult.rows.length > 0 ? lastMessageResult.rows[0].message_id : null;
-            
+
+            // Função para garantir que os IDs estejam no formato <id@dominio.com>
+            const normalizeMsgId = (v) => {
+                if (!v) return null;
+                const s = String(v).trim();
+                if (s.startsWith('<') && s.endsWith('>')) return s;
+                return `<${s.replace(/^<|>$/g, '')}>`;
+            };
+
+            const referencesChain = refsResult.rows
+                .map(r => normalizeMsgId(r.message_id))
+                .filter(Boolean); // Remove quaisquer valores nulos/vazios
+
             const emailHtmlComAssinatura = `<p>${descricao.replace(/\n/g, '<br>')}</p><br><p>Atenciosamente,<br>Equipa de Qualidade<br>AC Acessórios.</p>`;
             const emailTextComAssinatura = `${descricao}\n\nAtenciosamente,\nEquipa de Qualidade\nAC Acessórios.`;
 
@@ -254,13 +294,14 @@ router.post('/garantias/:id/update', upload.array('anexos', 10), async (req, res
                 attachments: req.files.map(file => ({ filename: file.originalname, path: file.path })),
             };
 
-            if (lastMessageId) {
-                emailData.inReplyTo = lastMessageId;
-                emailData.references = lastMessageId;
+            // MODIFICADO: Adiciona os cabeçalhos de resposta apenas se uma cadeia de e-mails já existir.
+            if (referencesChain.length > 0) {
+                emailData.inReplyTo = referencesChain[referencesChain.length - 1]; // O ID mais recente
+                emailData.references = referencesChain.join(' '); // A cadeia completa, separada por espaços
             }
 
             const info = await emailService.sendMail(emailData);
-            messageIdParaSalvar = info.messageId; // Guarda o ID da resposta
+            messageIdParaSalvar = info.messageId; // Guarda o ID da nova resposta
         }
 
         const historicoDesc = descricao;
