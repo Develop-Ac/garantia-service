@@ -4,496 +4,481 @@ const db = require('../database');
 const upload = require('../upload');
 const emailService = require('../services/emailService');
 
-// Rota GET /api/garantias (OTIMIZADA)
+/**
+ * Utilitário: normaliza Message-ID para o formato <...>
+ */
+function normalizeMsgId(v) {
+  if (!v) return null;
+  const s = String(v).trim();
+  if (s.startsWith('<') && s.endsWith('>')) return s;
+  return `<${s.replace(/^<|>$/g, '')}>`;
+}
+
+/**
+ * GET /api/garantias  (OTIMIZADA)
+ */
 router.get('/garantias', async (req, res) => {
-    const client = await db.getLocalClient();
-    try {
-        const queryText = `
-            SELECT 
-                g.*, 
-                COALESCE(h.historico, '[]'::json) as historico,
-                COALESCE(a.anexos, '[]'::json) as anexos
-            FROM garantias g
-            LEFT JOIN (
-                SELECT 
-                    garantia_id, 
-                    json_agg(historico_garantias.* ORDER BY data_ocorrencia DESC) as historico
-                FROM historico_garantias
-                GROUP BY garantia_id
-            ) h ON g.id = h.garantia_id
-            LEFT JOIN (
-                SELECT 
-                    garantia_id, 
-                    json_agg(anexos_garantias.* ORDER BY data_upload ASC) as anexos
-                FROM anexos_garantias
-                GROUP BY garantia_id
-            ) a ON g.id = a.garantia_id
-            ORDER BY g.data_criacao DESC;
-        `;
-        const result = await client.query(queryText);
-        res.json(result.rows);
-    } catch (error) {
-        console.error('Erro ao buscar garantias:', error);
-        res.status(500).json({ message: 'Erro interno ao buscar as garantias.' });
-    } finally {
-        client.release();
-    }
+  const client = await db.getLocalClient();
+  try {
+    const queryText = `
+      SELECT 
+        g.*, 
+        COALESCE(h.historico, '[]'::json) as historico,
+        COALESCE(a.anexos, '[]'::json) as anexos
+      FROM garantias g
+      LEFT JOIN (
+        SELECT 
+          garantia_id, 
+          json_agg(historico_garantias.* ORDER BY data_ocorrencia DESC) as historico
+        FROM historico_garantias
+        GROUP BY garantia_id
+      ) h ON g.id = h.garantia_id
+      LEFT JOIN (
+        SELECT 
+          garantia_id, 
+          json_agg(anexos_garantias.* ORDER BY data_upload ASC) as anexos
+        FROM anexos_garantias
+        GROUP BY garantia_id
+      ) a ON g.id = a.garantia_id
+      ORDER BY g.data_criacao DESC;
+    `;
+    const result = await client.query(queryText);
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Erro ao buscar garantias:', error);
+    res.status(500).json({ message: 'Erro interno ao buscar as garantias.' });
+  } finally {
+    client.release();
+  }
 });
 
-// Rota GET /api/garantias/:id (OTIMIZADA)
+/**
+ * GET /api/garantias/:id  (OTIMIZADA)
+ */
 router.get('/garantias/:id', async (req, res) => {
-    const { id } = req.params;
-    const client = await db.getLocalClient();
-    try {
-        const queryText = `
-            SELECT 
-                g.*, 
-                COALESCE(h.historico, '[]'::json) as historico,
-                COALESCE(a.anexos, '[]'::json) as anexos
-            FROM garantias g
-            LEFT JOIN (
-                SELECT 
-                    garantia_id, 
-                    json_agg(historico_garantias.* ORDER BY data_ocorrencia DESC) as historico
-                FROM historico_garantias
-                GROUP BY garantia_id
-            ) h ON g.id = h.garantia_id
-            LEFT JOIN (
-                SELECT 
-                    garantia_id, 
-                    json_agg(anexos_garantias.* ORDER BY data_upload ASC) as anexos
-                FROM anexos_garantias
-                GROUP BY garantia_id
-            ) a ON g.id = a.garantia_id
-            WHERE g.id = $1;
-        `;
-        const garantiaResult = await client.query(queryText, [id]);
+  const { id } = req.params;
+  const client = await db.getLocalClient();
+  try {
+    const queryText = `
+      SELECT 
+        g.*, 
+        COALESCE(h.historico, '[]'::json) as historico,
+        COALESCE(a.anexos, '[]'::json) as anexos
+      FROM garantias g
+      LEFT JOIN (
+        SELECT 
+          garantia_id, 
+          json_agg(historico_garantias.* ORDER BY data_ocorrencia DESC) as historico
+        FROM historico_garantias
+        GROUP BY garantia_id
+      ) h ON g.id = h.garantia_id
+      LEFT JOIN (
+        SELECT 
+          garantia_id, 
+          json_agg(anexos_garantias.* ORDER BY data_upload ASC) as anexos
+        FROM anexos_garantias
+        GROUP BY garantia_id
+      ) a ON g.id = a.garantia_id
+      WHERE g.id = $1;
+    `;
+    const garantiaResult = await client.query(queryText, [id]);
 
-        if (garantiaResult.rows.length === 0) {
-            return res.status(404).json({ message: 'Garantia não encontrada.' });
-        }
-        res.json(garantiaResult.rows[0]);
-    } catch (error) {
-        console.error(`Erro ao buscar detalhes da garantia ${id}:`, error);
-        res.status(500).json({ message: 'Erro interno ao buscar detalhes da garantia.' });
-    } finally {
-        client.release();
+    if (garantiaResult.rows.length === 0) {
+      return res.status(404).json({ message: 'Garantia não encontrada.' });
     }
+    res.json(garantiaResult.rows[0]);
+  } catch (error) {
+    console.error(`Erro ao buscar detalhes da garantia ${id}:`, error);
+    res.status(500).json({ message: 'Erro interno ao buscar detalhes da garantia.' });
+  } finally {
+    client.release();
+  }
 });
 
-// Rota POST /api/garantias
-router.get('/garantias', async (req, res) => {
-    const client = await db.getLocalClient();
-    try {
-        const queryText = `
-            SELECT 
-                g.*, 
-                COALESCE(h.historico, '[]'::json) as historico,
-                COALESCE(a.anexos, '[]'::json) as anexos
-            FROM garantias g
-            LEFT JOIN (
-                SELECT 
-                    garantia_id, 
-                    json_agg(historico_garantias.* ORDER BY data_ocorrencia DESC) as historico
-                FROM historico_garantias
-                GROUP BY garantia_id
-            ) h ON g.id = h.garantia_id
-            LEFT JOIN (
-                SELECT 
-                    garantia_id, 
-                    json_agg(anexos_garantias.* ORDER BY data_upload ASC) as anexos
-                FROM anexos_garantias
-                GROUP BY garantia_id
-            ) a ON g.id = a.garantia_id
-            ORDER BY g.data_criacao DESC;
-        `;
-        const result = await client.query(queryText);
-        res.json(result.rows);
-    } catch (error) {
-        console.error('Erro ao buscar garantias:', error);
-        res.status(500).json({ message: 'Erro interno ao buscar as garantias.' });
-    } finally {
-        client.release();
-    }
-});
-
-// Rota GET /api/garantias/:id (OTIMIZADA)
-router.get('/garantias/:id', async (req, res) => {
-    const { id } = req.params;
-    const client = await db.getLocalClient();
-    try {
-        const queryText = `
-            SELECT 
-                g.*, 
-                COALESCE(h.historico, '[]'::json) as historico,
-                COALESCE(a.anexos, '[]'::json) as anexos
-            FROM garantias g
-            LEFT JOIN (
-                SELECT 
-                    garantia_id, 
-                    json_agg(historico_garantias.* ORDER BY data_ocorrencia DESC) as historico
-                FROM historico_garantias
-                GROUP BY garantia_id
-            ) h ON g.id = h.garantia_id
-            LEFT JOIN (
-                SELECT 
-                    garantia_id, 
-                    json_agg(anexos_garantias.* ORDER BY data_upload ASC) as anexos
-                FROM anexos_garantias
-                GROUP BY garantia_id
-            ) a ON g.id = a.garantia_id
-            WHERE g.id = $1;
-        `;
-        const garantiaResult = await client.query(queryText, [id]);
-
-        if (garantiaResult.rows.length === 0) {
-            return res.status(404).json({ message: 'Garantia não encontrada.' });
-        }
-        res.json(garantiaResult.rows[0]);
-    } catch (error) {
-        console.error(`Erro ao buscar detalhes da garantia ${id}:`, error);
-        res.status(500).json({ message: 'Erro interno ao buscar detalhes da garantia.' });
-    } finally {
-        client.release();
-    }
-});
-
-// Rota POST /api/garantias
+/**
+ * POST /api/garantias
+ * Criação do processo — envia o primeiro e-mail (se não "outrosMeios") e salva assunto/message_id
+ */
 router.post('/garantias', upload.array('anexos', 10), async (req, res) => {
-    const {
-        erpFornecedorId, nomeFornecedor, emailFornecedor, produtos,
-        notaFiscal, descricao, copiasEmail, tipoGarantia, nfsCompra,
-        outrosMeios, protocoloFornecedor
-    } = req.body;
+  const {
+    erpFornecedorId, nomeFornecedor, emailFornecedor, produtos,
+    notaFiscal, // usado como nota_interna
+    descricao, copiasEmail, tipoGarantia, nfsCompra,
+    outrosMeios,
+    protocoloFornecedor
+  } = req.body;
 
-    if (!erpFornecedorId || !produtos || !notaFiscal || !descricao || !tipoGarantia) {
-        return res.status(400).json({ message: 'Dados incompletos. Verifique os campos obrigatórios.' });
+  if (!erpFornecedorId || !produtos || !notaFiscal || !descricao || !tipoGarantia) {
+    return res.status(400).json({ message: 'Dados incompletos. Verifique os campos obrigatórios.' });
+  }
+
+  const client = await db.getLocalClient();
+  try {
+    await client.query('BEGIN');
+
+    const garantiaQuery = `
+      INSERT INTO garantias (
+        erp_fornecedor_id, nome_fornecedor, email_fornecedor, produtos, 
+        nota_interna, descricao, tipo_garantia, nfs_compra, status, 
+        protocolo_fornecedor, copias_email
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      RETURNING id;
+    `;
+    const garantiaValues = [
+      erpFornecedorId, nomeFornecedor, emailFornecedor, produtos, 
+      notaFiscal, descricao, tipoGarantia, nfsCompra, 
+      'Aguardando Aprovação do Fornecedor',
+      protocoloFornecedor,
+      copiasEmail
+    ];
+    const result = await client.query(garantiaQuery, garantiaValues);
+    const novaGarantiaId = result.rows[0].id;
+
+    if (req.files && req.files.length > 0) {
+      const anexoQuery = `
+        INSERT INTO anexos_garantias (garantia_id, nome_ficheiro, path_ficheiro)
+        VALUES ($1, $2, $3);
+      `;
+      for (const file of req.files) {
+        await client.query(anexoQuery, [novaGarantiaId, file.originalname, file.path]);
+      }
+    }
+    
+    let historicoDesc;
+    let historicoTipo = 'Criação do Processo';
+    let messageIdParaSalvar = null;
+    let assuntoParaSalvar = null;
+
+    if (outrosMeios !== 'true') {
+      const subject = `Abertura de Processo de ${tipoGarantia} - Nota Fiscal ${nfsCompra || 'N/A'}`;
+      const emailData = {
+        to: emailFornecedor,
+        cc: copiasEmail,
+        subject,
+        text: `Prezados,\n\nAbrimos um processo de garantia (${tipoGarantia}) para o(s) seguinte(s) produto(s):\n- ${produtos}\n\nReferente à(s) NF(s) de Compra: ${nfsCompra || 'N/A'}\n\nCódigo de Controle Interno: ${notaFiscal}\n\nDescrição do problema: ${descricao}\n\nPor favor, verifiquem os anexos para mais detalhes.\n\nAtenciosamente,\nEquipe de Qualidade AC Acessórios.`,
+        html: `<p>Prezados,</p><p>Abrimos um processo de <b>${tipoGarantia}</b> para o(s) seguinte(s) produto(s):</p><ul><li>${String(produtos || '').replace(/; /g, '</li><li>')}</li></ul><p>Referente à(s) NF(s) de Compra: <b>${nfsCompra || 'N/A'}</b></p><p>Código de Controle Interno: <b>${notaFiscal}</b></p><p><b>Descrição do problema:</b> ${descricao}</p><p>Por favor, verifiquem os anexos para mais detalhes.</p><p>Atenciosamente,<br>Equipe de Qualidade AC Acessórios.</p>`,
+        attachments: (req.files || []).map(file => ({ filename: file.originalname, path: file.path }))
+      };
+      
+      const info = await emailService.sendMail(emailData);
+      messageIdParaSalvar = info.messageId;
+      assuntoParaSalvar = subject;
+      historicoDesc = emailData.html;
+      historicoTipo = 'Email Enviado';
+    } else {
+      historicoDesc = `Processo de garantia criado manualmente (aberto por outros meios). Protocolo: ${protocoloFornecedor || 'N/A'}`;
     }
 
-    const client = await db.getLocalClient();
-    try {
-        await client.query('BEGIN');
+    const historicoQuery = `
+      INSERT INTO historico_garantias (garantia_id, descricao, tipo_interacao, message_id, assunto)
+      VALUES ($1, $2, $3, $4, $5);
+    `;
+    await client.query(historicoQuery, [novaGarantiaId, historicoDesc, historicoTipo, messageIdParaSalvar, assuntoParaSalvar]);
 
-        const garantiaQuery = `
-            INSERT INTO garantias (
-                erp_fornecedor_id, nome_fornecedor, email_fornecedor, produtos, 
-                nota_interna, descricao, tipo_garantia, nfs_compra, status, 
-                protocolo_fornecedor, copias_email
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-            RETURNING id;
-        `;
-        const garantiaValues = [
-            erpFornecedorId, nomeFornecedor, emailFornecedor, produtos, 
-            notaFiscal, descricao, tipoGarantia, nfsCompra, 
-            'Aguardando Aprovação do Fornecedor', protocoloFornecedor, copiasEmail
-        ];
-        const result = await client.query(garantiaQuery, garantiaValues);
-        const novaGarantiaId = result.rows[0].id;
+    await client.query('COMMIT');
+    res.status(201).json({
+      message: 'Garantia criada com sucesso!',
+      garantiaId: novaGarantiaId,
+    });
 
-        if (req.files && req.files.length > 0) {
-            const anexoQuery = `INSERT INTO anexos_garantias (garantia_id, nome_ficheiro, path_ficheiro) VALUES ($1, $2, $3);`;
-            for (const file of req.files) {
-                await client.query(anexoQuery, [novaGarantiaId, file.originalname, file.path]);
-            }
-        }
-        
-        let historicoDesc;
-        let historicoTipo = 'Criação do Processo';
-        let messageIdParaSalvar = null;
-
-        if (outrosMeios !== 'true') {
-            const emailData = {
-                to: emailFornecedor,
-                cc: copiasEmail,
-                subject: `Abertura de Processo de ${tipoGarantia} - Nota Fiscal ${nfsCompra || 'N/A'}`,
-                text: `Prezados,\n\n...`, // Corpo do e-mail
-                html: `<p>Prezados,</p>...`, // Corpo do e-mail em HTML
-                attachments: req.files.map(file => ({ filename: file.originalname, path: file.path }))
-            };
-            
-            const info = await emailService.sendMail(emailData);
-            messageIdParaSalvar = info.messageId;
-
-            historicoDesc = emailData.html;
-            historicoTipo = 'Email Enviado';
-        } else {
-            historicoDesc = `Processo de garantia criado manualmente. Protocolo: ${protocoloFornecedor || 'N/A'}`;
-        }
-
-        const historicoQuery = `
-            INSERT INTO historico_garantias (garantia_id, descricao, tipo_interacao, message_id)
-            VALUES ($1, $2, $3, $4);
-        `;
-        await client.query(historicoQuery, [novaGarantiaId, historicoDesc, historicoTipo, messageIdParaSalvar]);
-
-        await client.query('COMMIT');
-        res.status(201).json({ message: 'Garantia criada com sucesso!', garantiaId: novaGarantiaId });
-
-    } catch (error) {
-        await client.query('ROLLBACK');
-        console.error('Erro detalhado ao criar garantia:', error.stack || error);
-        res.status(500).json({ message: 'Erro interno ao criar a garantia.' });
-    } finally {
-        client.release();
-    }
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Erro detalhado ao criar garantia:', error.stack || error);
+    res.status(500).json({ message: 'Erro interno ao criar a garantia.' });
+  } finally {
+    client.release();
+  }
 });
 
-// Rota POST /api/garantias/:id/update (MODIFICADA)
+/**
+ * POST /api/garantias/:id/update
+ * Responder/Anexar com threading correto e reuso de assunto
+ */
 router.post('/garantias/:id/update', upload.array('anexos', 10), async (req, res) => {
-    const { id } = req.params;
-    const { descricao, tipo_interacao, enviar_email, destinatario } = req.body;
-    const client = await db.getLocalClient();
+  const { id } = req.params;
+  const { descricao, tipo_interacao, enviar_email, destinatario } = req.body;
+  const client = await db.getLocalClient();
 
-    try {
-        await client.query('BEGIN');
+  try {
+    await client.query('BEGIN');
 
-        let messageIdParaSalvar = null;
-        
-        if (enviar_email === 'true') {
-            const garantiaInfoResult = await client.query('SELECT nota_interna, email_fornecedor, copias_email FROM garantias WHERE id = $1', [id]);
-            const garantiaInfo = garantiaInfoResult.rows[0];
-            const notaInterna = garantiaInfo.nota_interna;
-            const emailPrincipal = garantiaInfo.email_fornecedor;
-            const copiasEmail = garantiaInfo.copias_email;
-            const destinatarioFinal = destinatario || emailPrincipal;
+    let messageIdParaSalvar = null;
+    let assuntoParaSalvar = null;
+    
+    if (enviar_email === 'true') {
+      const garantiaInfoResult = await client.query(
+        'SELECT nota_interna, email_fornecedor, copias_email FROM garantias WHERE id = $1',
+        [id]
+      );
+      const garantiaInfo = garantiaInfoResult.rows[0];
+      const notaInterna = garantiaInfo.nota_interna;
+      const emailPrincipal = garantiaInfo.email_fornecedor;
+      const copiasEmail = garantiaInfo.copias_email;
+      const destinatarioFinal = destinatario || emailPrincipal;
 
-            if (!destinatarioFinal) {
-                throw new Error('O e-mail do destinatário não foi encontrado.');
-            }
-            
-            // 1. Pega TODA a cadeia de message_ids em ordem cronológica
-            const refsResult = await client.query(
-                `SELECT message_id, tipo_interacao
-                 FROM historico_garantias
-                 WHERE garantia_id = $1 AND message_id IS NOT NULL
-                 ORDER BY data_ocorrencia ASC`,
-                [id]
-            );
+      if (!destinatarioFinal) {
+        throw new Error('O e-mail do destinatário não foi encontrado.');
+      }
+      
+      // 1) toda cadeia de message_id (ordem cronológica)
+      const refsResult = await client.query(
+        `SELECT message_id, tipo_interacao
+           FROM historico_garantias
+          WHERE garantia_id = $1 AND message_id IS NOT NULL
+          ORDER BY data_ocorrencia ASC`,
+        [id]
+      );
 
-            // 2. Normaliza os IDs para garantir que estejam no formato <id@dominio.com>
-            const normalizeMsgId = (v) => {
-                if (!v) return null;
-                const s = String(v).trim();
-                if (s.startsWith('<') && s.endsWith('>')) return s;
-                return `<${s.replace(/^<|>$/g, '')}>`;
-            };
+      const chain = refsResult.rows
+        .map(r => ({ id: normalizeMsgId(r.message_id), tipo: r.tipo_interacao }))
+        .filter(r => !!r.id);
 
-            const chain = refsResult.rows
-                .map(r => ({ id: normalizeMsgId(r.message_id), tipo: r.tipo_interacao }))
-                .filter(r => !!r.id);
+      // 2) parent = último da cadeia (enviado ou recebido)
+      const parentId = chain.length ? chain[chain.length - 1].id : null;
 
-            // 3. O parentId é o último e-mail RECEBIDO, senão o último da cadeia.
-            const lastReceived = [...chain].reverse().find(r => /Recebida/i.test(r.tipo));
-            const parentId = (lastReceived ? lastReceived.id : (chain.length ? chain[chain.length - 1].id : null));
+      // 3) references = cadeia inteira (array)
+      const referencesArray = chain.map(r => r.id);
 
-            // 4. A cadeia de referências é um ARRAY com todos os IDs.
-            const referencesArray = chain.map(r => r.id);
+      // 4) assunto: reutilizar o último salvo
+      const lastSubjectResult = await client.query(
+        `SELECT assunto
+           FROM historico_garantias
+          WHERE garantia_id = $1 AND assunto IS NOT NULL
+          ORDER BY data_ocorrencia DESC
+          LIMIT 1`,
+        [id]
+      );
+      const lastSubject = lastSubjectResult.rows[0]?.assunto || null;
+      const computedSubject = lastSubject
+        ? (/^re:/i.test(lastSubject) ? lastSubject : `Re: ${lastSubject}`)
+        : `Re: Garantia - NI ${notaInterna}`; // fallback
+      assuntoParaSalvar = computedSubject;
 
-            const emailHtmlComAssinatura = `<p>${descricao.replace(/\n/g, '<br>')}</p><br><p>Atenciosamente,<br>Equipa de Qualidade<br>AC Acessórios.</p>`;
-            const emailTextComAssinatura = `${descricao}\n\nAtenciosamente,\nEquipa de Qualidade\nAC Acessórios.`;
+      const emailHtmlComAssinatura = `<p>${String(descricao || '').replace(/\n/g, '<br>')}</p><br><p>Atenciosamente,<br>Equipe de Qualidade<br>AC Acessórios.</p>`;
+      const emailTextComAssinatura = `${descricao || ''}\n\nAtenciosamente,\nEquipe de Qualidade\nAC Acessórios.`;
 
-            // 5. Monta os dados do e-mail
-            const emailData = {
-                to: destinatarioFinal,
-                cc: copiasEmail,
-                subject: `Re: Garantia - NI ${notaInterna}`,
-                html: emailHtmlComAssinatura,
-                text: emailTextComAssinatura,
-                attachments: req.files.map(f => ({ filename: f.originalname, path: f.path })),
-            };
+      const emailData = {
+        to: destinatarioFinal,
+        cc: copiasEmail,
+        subject: computedSubject,
+        html: emailHtmlComAssinatura,
+        text: emailTextComAssinatura,
+        attachments: (req.files || []).map(f => ({ filename: f.originalname, path: f.path })),
+      };
 
-            // 6. Injeta os cabeçalhos de resposta se houver um e-mail pai.
-            if (parentId) {
-                emailData.inReplyTo = parentId;
-                emailData.references = referencesArray; // Envia como array
-                // Adiciona também os cabeçalhos "raw" para máxima compatibilidade
-                emailData.headers = {
-                    'In-Reply-To': parentId,
-                    'References': referencesArray.join(' '),
-                };
-            }
-
-            const info = await emailService.sendMail(emailData);
-            messageIdParaSalvar = info.messageId; // Guarda o ID da nova resposta
-        }
-
-        const historicoDesc = descricao;
-        const historicoTipo = enviar_email === 'true' ? 'Resposta Enviada' : (tipo_interacao || 'Nota Interna');
-
-        const historicoQuery = `
-            INSERT INTO historico_garantias (garantia_id, descricao, tipo_interacao, foi_visto, message_id) 
-            VALUES ($1, $2, $3, $4, $5)
-        `;
-        await client.query(historicoQuery, [id, historicoDesc, historicoTipo, enviar_email === 'true', messageIdParaSalvar]);
-
-        if (req.files && req.files.length > 0) {
-            const anexoQuery = 'INSERT INTO anexos_garantias (garantia_id, nome_ficheiro, path_ficheiro) VALUES ($1, $2, $3)';
-            for (const file of req.files) {
-                await client.query(anexoQuery, [id, file.originalname, file.path]);
-            }
-        }
-
-        await client.query('COMMIT');
-        res.status(200).json({ message: 'Garantia atualizada com sucesso!' });
-
-    } catch (error) {
-        await client.query('ROLLBACK');
-        console.error(`Erro detalhado ao atualizar a garantia ${id}:`, error.stack || error);
-        res.status(500).json({ message: 'Erro interno ao atualizar a garantia.' });
-    } finally {
-        client.release();
-    }
-});
-
-// Rota GET /dados-erp/venda/:ni
-router.get('/dados-erp/venda/:ni', async (req, res) => {
-    const { ni } = req.params;
-    if (!ni) {
-        return res.status(400).json({ message: 'O código da Nota Interna (NI) é obrigatório.' });
-    }
-
-    try {
-        const clienteQuery = `
-            SELECT DISTINCT
-                c.CLI_CODIGO,
-                c.CLI_NOME
-            FROM NF_SAIDA ns
-            JOIN CLIENTES c ON ns.CLI_CODIGO = c.CLI_CODIGO
-            WHERE ns.NFS = ? AND ns.EMPRESA = ?
-        `;
-        const clienteResult = await db.queryErp(clienteQuery, [ni, 3]);
-
-        if (clienteResult.length === 0) {
-            return res.status(404).json({ message: 'Nenhuma Nota Interna encontrada com este código para a empresa 3.' });
-        }
-
-        const cliente = clienteResult[0];
-        const cliCodigo = cliente.CLI_CODIGO;
-
-        const produtosItensQuery = `
-            SELECT DISTINCT
-                ni.PRO_CODIGO,
-                ni.QUANTIDADE
-            FROM NFS_ITENS ni
-            WHERE ni.NFS = ? AND ni.EMPRESA = ?
-        `;
-        const produtosItensResult = await db.queryErp(produtosItensQuery, [ni, 3]);
-
-        let produtosFinalResult = [];
-        if (produtosItensResult.length > 0) {
-            const productCodes = produtosItensResult.map(p => p.PRO_CODIGO);
-            const placeholders = productCodes.map(() => '?').join(',');
-
-            const produtosDescricaoQuery = `
-                SELECT DISTINCT
-                    p.PRO_CODIGO,
-                    p.PRO_DESCRICAO
-                FROM PRODUTOS p
-                WHERE p.PRO_CODIGO IN (${placeholders})
-            `;
-            const produtosDescricaoResult = await db.queryErp(produtosDescricaoQuery, productCodes);
-            
-            produtosFinalResult = produtosItensResult.map(item => {
-                const descricaoInfo = produtosDescricaoResult.find(d => d.PRO_CODIGO === item.PRO_CODIGO);
-                return {
-                    PRO_CODIGO: item.PRO_CODIGO,
-                    QUANTIDADE: item.QUANTIDADE,
-                    PRO_DESCRICAO: descricaoInfo ? descricaoInfo.PRO_DESCRICAO : 'Descrição não encontrada',
-                };
-            });
-        }
-
-        const emailQuery = `SELECT DISTINCT EMAIL FROM CLIENTES_EMAIL WHERE CLI_CODIGO = ?`;
-        const emailResults = await db.queryErp(emailQuery, [cliCodigo]);
-        const emails = emailResults.map(row => row.EMAIL);
-
-        const response = {
-            cliente: {
-                CLI_CODIGO: cliCodigo,
-                CLI_NOME: cliente.CLI_NOME,
-                EMAILS: emails,
-            },
-            produtos: produtosFinalResult,
+      if (parentId) {
+        emailData.inReplyTo = parentId;
+        emailData.references = referencesArray; // array
+        emailData.headers = {
+          'In-Reply-To': parentId,
+          'References': referencesArray.join(' '),
         };
+      }
 
-        res.json(response);
+      // log auxiliar (opcional)
+      console.log('Reply headers ->', {
+        inReplyTo: emailData.inReplyTo,
+        references: emailData.references,
+        raw: emailData.headers,
+        subject: emailData.subject,
+      });
 
-    } catch (error) {
-        console.error(`Erro ao buscar dados da NI ${ni} do ERP:`, error);
-        res.status(500).json({ message: 'Erro interno ao comunicar com o ERP.' });
+      const info = await emailService.sendMail(emailData);
+      messageIdParaSalvar = info.messageId;
     }
+
+    const historicoDesc = descricao;
+    const historicoTipo = (enviar_email === 'true') ? 'Resposta Enviada' : (tipo_interacao || 'Nota Interna');
+
+    const historicoQuery = `
+      INSERT INTO historico_garantias (garantia_id, descricao, tipo_interacao, foi_visto, message_id, assunto) 
+      VALUES ($1, $2, $3, $4, $5, $6)
+    `;
+    await client.query(historicoQuery, [
+      id,
+      historicoDesc,
+      historicoTipo,
+      enviar_email === 'true',
+      messageIdParaSalvar,
+      assuntoParaSalvar
+    ]);
+
+    if (req.files && req.files.length > 0) {
+      const anexoQuery = 'INSERT INTO anexos_garantias (garantia_id, nome_ficheiro, path_ficheiro) VALUES ($1, $2, $3)';
+      for (const file of req.files) {
+        await client.query(anexoQuery, [id, file.originalname, file.path]);
+      }
+    }
+
+    await client.query('COMMIT');
+    res.status(200).json({ message: 'Garantia atualizada com sucesso!' });
+
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error(`Erro detalhado ao atualizar a garantia ${id}:`, error.stack || error);
+    res.status(500).json({ message: 'Erro interno ao atualizar a garantia.' });
+  } finally {
+    client.release();
+  }
 });
 
-// ROTA: Webhook para receber e-mails processados pelo N8N
+/**
+ * GET /dados-erp/venda/:ni
+ */
+router.get('/dados-erp/venda/:ni', async (req, res) => {
+  const { ni } = req.params;
+  if (!ni) {
+    return res.status(400).json({ message: 'O código da Nota Interna (NI) é obrigatório.' });
+  }
+
+  try {
+    const clienteQuery = `
+      SELECT DISTINCT
+        c.CLI_CODIGO,
+        c.CLI_NOME
+      FROM NF_SAIDA ns
+      JOIN CLIENTES c ON ns.CLI_CODIGO = c.CLI_CODIGO
+      WHERE ns.NFS = ? AND ns.EMPRESA = ?
+    `;
+    const clienteResult = await db.queryErp(clienteQuery, [ni, 3]);
+
+    if (clienteResult.length === 0) {
+      return res.status(404).json({ message: 'Nenhuma Nota Interna encontrada com este código para a empresa 3.' });
+    }
+
+    const cliente = clienteResult[0];
+    const cliCodigo = cliente.CLI_CODIGO;
+
+    const produtosItensQuery = `
+      SELECT DISTINCT
+        ni.PRO_CODIGO,
+        ni.QUANTIDADE
+      FROM NFS_ITENS ni
+      WHERE ni.NFS = ? AND ni.EMPRESA = ?
+    `;
+    const produtosItensResult = await db.queryErp(produtosItensQuery, [ni, 3]);
+
+    let produtosFinalResult = [];
+    if (produtosItensResult.length > 0) {
+      const productCodes = produtosItensResult.map(p => p.PRO_CODIGO);
+      const placeholders = productCodes.map(() => '?').join(',');
+
+      const produtosDescricaoQuery = `
+        SELECT DISTINCT
+          p.PRO_CODIGO,
+          p.PRO_DESCRICAO
+        FROM PRODUTOS p
+        WHERE p.PRO_CODIGO IN (${placeholders})
+      `;
+      const produtosDescricaoResult = await db.queryErp(produtosDescricaoQuery, productCodes);
+      
+      produtosFinalResult = produtosItensResult.map(item => {
+        const descricaoInfo = produtosDescricaoResult.find(d => d.PRO_CODIGO === item.PRO_CODIGO);
+        return {
+          PRO_CODIGO: item.PRO_CODIGO,
+          QUANTIDADE: item.QUANTIDADE,
+          PRO_DESCRICAO: descricaoInfo ? descricaoInfo.PRO_DESCRICAO : 'Descrição não encontrada',
+        };
+      });
+    }
+
+    const emailQuery = `SELECT DISTINCT EMAIL FROM CLIENTES_EMAIL WHERE CLI_CODIGO = ?`;
+    const emailResults = await db.queryErp(emailQuery, [cliCodigo]);
+    const emails = emailResults.map(row => row.EMAIL);
+
+    const response = {
+      cliente: {
+        CLI_CODIGO: cliCodigo,
+        CLI_NOME: cliente.CLI_NOME,
+        EMAILS: emails,
+      },
+      produtos: produtosFinalResult,
+    };
+
+    res.json(response);
+
+  } catch (error) {
+    console.error(`Erro ao buscar dados da NI ${ni} do ERP:`, error);
+    res.status(500).json({ message: 'Erro interno ao comunicar com o ERP.' });
+  }
+});
+
+/**
+ * POST /garantias/email-reply
+ * Webhook do N8N — agora aceita e salva também o subject (se enviado)
+ */
 router.post('/garantias/email-reply', async (req, res) => {
-    const n8nSecret = req.headers['x-n8n-secret'];
-    if (n8nSecret !== process.env.N8N_SECRET_KEY) {
-        return res.status(403).send('Acesso não autorizado.');
+  const n8nSecret = req.headers['x-n8n-secret'];
+  if (n8nSecret !== process.env.N8N_SECRET_KEY) {
+    return res.status(403).send('Acesso não autorizado.');
+  }
+
+  const { ni_number, sender, email_body_html, message_id, subject } = req.body;
+
+  if (!ni_number || !sender || !email_body_html) {
+    return res.status(400).json({ message: 'Dados incompletos.' });
+  }
+
+  const client = await db.getLocalClient();
+  try {
+    await client.query('BEGIN');
+
+    const garantiaResult = await client.query('SELECT id FROM garantias WHERE nota_interna = $1', [ni_number]);
+    if (garantiaResult.rows.length === 0) {
+      await client.query('COMMIT');
+      return res.status(200).send('Garantia não encontrada.');
+    }
+    const garantiaId = garantiaResult.rows[0].id;
+
+    // Evita duplicidade por message_id
+    const checkDuplicateQuery = 'SELECT id FROM historico_garantias WHERE message_id = $1';
+    const duplicateResult = await client.query(checkDuplicateQuery, [message_id]);
+
+    if (duplicateResult.rows.length > 0) {
+      console.log(`Webhook N8N: E-mail duplicado com message_id ${message_id} ignorado.`);
+      await client.query('COMMIT');
+      return res.status(200).send('E-mail duplicado ignorado.');
     }
 
-    const { ni_number, sender, email_body_html, message_id } = req.body;
+    const descricao = `<b>De:</b> ${sender}<br><hr>${email_body_html}`;
+    const historicoQuery = `
+      INSERT INTO historico_garantias (garantia_id, descricao, tipo_interacao, foi_visto, message_id, assunto)
+      VALUES ($1, $2, 'Resposta Recebida', FALSE, $3, $4);
+    `;
+    await client.query(historicoQuery, [garantiaId, descricao, message_id, subject || null]);
 
-    if (!ni_number || !sender || !email_body_html) {
-        return res.status(400).json({ message: 'Dados incompletos.' });
-    }
-
-    const client = await db.getLocalClient();
-    try {
-        await client.query('BEGIN');
-
-        const garantiaResult = await client.query('SELECT id FROM garantias WHERE nota_interna = $1', [ni_number]);
-        if (garantiaResult.rows.length === 0) {
-            return res.status(200).send('Garantia não encontrada.');
-        }
-        const garantiaId = garantiaResult.rows[0].id;
-
-        // NOVO: Verifica se um e-mail com este message_id já existe no histórico.
-        const checkDuplicateQuery = 'SELECT id FROM historico_garantias WHERE message_id = $1';
-        const duplicateResult = await client.query(checkDuplicateQuery, [message_id]);
-
-        if (duplicateResult.rows.length > 0) {
-            console.log(`Webhook N8N: E-mail duplicado com message_id ${message_id} ignorado.`);
-            await client.query('COMMIT'); // Finaliza a transação mesmo assim
-            return res.status(200).send('E-mail duplicado ignorado.');
-        }
-
-        const descricao = `<b>De:</b> ${sender}<br><hr>${email_body_html}`;
-        const historicoQuery = `
-            INSERT INTO historico_garantias (garantia_id, descricao, tipo_interacao, foi_visto, message_id)
-            VALUES ($1, $2, 'Resposta Recebida', FALSE, $3);
-        `;
-        await client.query(historicoQuery, [garantiaId, descricao, message_id]);
-
-        await client.query('UPDATE garantias SET tem_nova_interacao = TRUE WHERE id = $1', [garantiaId]);
-        await client.query('COMMIT');
-        res.status(200).send('Resposta recebida e registrada com sucesso.');
-    } catch (error) {
-        await client.query('ROLLBACK');
-        console.error('Erro de banco de dados no webhook do N8N:', error);
-        res.status(500).json({ message: 'Erro interno ao processar a resposta.' });
-    } finally {
-        client.release();
-    }
+    await client.query('UPDATE garantias SET tem_nova_interacao = TRUE WHERE id = $1', [garantiaId]);
+    await client.query('COMMIT');
+    res.status(200).send('Resposta recebida e registrada com sucesso.');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Erro de banco de dados no webhook do N8N:', error);
+    res.status(500).json({ message: 'Erro interno ao processar a resposta.' });
+  } finally {
+    client.release();
+  }
 });
 
-// ROTA: Marcar interações de uma garantia como vistas
+/**
+ * PUT /garantias/:id/marcar-como-visto
+ */
 router.put('/garantias/:id/marcar-como-visto', async (req, res) => {
-    const { id } = req.params;
-    const client = await db.getLocalClient();
-    try {
-        await client.query('BEGIN');
-        await client.query('UPDATE garantias SET tem_nova_interacao = FALSE WHERE id = $1', [id]);
-        await client.query('UPDATE historico_garantias SET foi_visto = TRUE WHERE garantia_id = $1', [id]);
-        await client.query('COMMIT');
-        res.status(200).json({ message: 'Interações marcadas como vistas.' });
-    } catch (error) {
-        await client.query('ROLLBACK');
-        console.error(`Erro ao marcar interações como vistas para a garantia ${id}:`, error);
-        res.status(500).json({ message: 'Erro interno do servidor.' });
-    } finally {
-        client.release();
-    }
-}); 
+  const { id } = req.params;
+  const client = await db.getLocalClient();
+  try {
+    await client.query('BEGIN');
+    await client.query('UPDATE garantias SET tem_nova_interacao = FALSE WHERE id = $1', [id]);
+    await client.query('UPDATE historico_garantias SET foi_visto = TRUE WHERE garantia_id = $1', [id]);
+    await client.query('COMMIT');
+    res.status(200).json({ message: 'Interações marcadas como vistas.' });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error(`Erro ao marcar interações como vistas para a garantia ${id}:`, error);
+    res.status(500).json({ message: 'Erro interno do servidor.' });
+  } finally {
+    client.release();
+  }
+});
 
 module.exports = router;
