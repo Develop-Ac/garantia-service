@@ -200,7 +200,6 @@ router.put('/garantias/:id/status', async (req, res) => {
     }
 });
 
-// Rota POST /api/garantias/:id/update
 router.post('/garantias/:id/update', upload.array('anexos', 10), async (req, res) => {
     const { id } = req.params;
     const { descricao, tipo_interacao, enviar_email, destinatario } = req.body;
@@ -208,63 +207,77 @@ router.post('/garantias/:id/update', upload.array('anexos', 10), async (req, res
 
     try {
         await client.query('BEGIN');
-
         let messageIdParaSalvar = null;
         let assuntoParaSalvar = null;
-        
+
         if (enviar_email === 'true') {
-            const garantiaInfoResult = await client.query(
-                'SELECT nota_interna, email_fornecedor, copias_email FROM garantias WHERE id = $1',
-                [id]
-            );
+            const garantiaInfoResult = await client.query('SELECT nota_interna, email_fornecedor, copias_email FROM garantias WHERE id = $1', [id]);
             const garantiaInfo = garantiaInfoResult.rows[0];
             const notaInterna = garantiaInfo.nota_interna;
             const emailPrincipal = garantiaInfo.email_fornecedor;
             const copiasEmail = garantiaInfo.copias_email;
             const destinatarioFinal = destinatario || emailPrincipal;
 
-            if (!destinatarioFinal) {
-                throw new Error('O e-mail do destinatário não foi encontrado.');
-            }
-            
+            if (!destinatarioFinal) throw new Error('Destinatário não encontrado.');
+
             const refsResult = await client.query(
-                `SELECT message_id, tipo_interacao
+                `SELECT message_id, tipo_interacao, assunto, descricao, data_ocorrencia
                  FROM historico_garantias
-                 WHERE garantia_id = $1 AND message_id IS NOT NULL
-                 ORDER BY data_ocorrencia ASC`,
+                 WHERE garantia_id = $1 AND message_id IS NOT NULL ORDER BY data_ocorrencia ASC`,
                 [id]
             );
 
             const normalizeMsgId = (v) => {
                 if (!v) return null;
                 const s = String(v).trim();
-                if (s.startsWith('<') && s.endsWith('>')) return s;
-                return `<${s.replace(/^<|>$/g, '')}>`;
+                return s.startsWith('<') && s.endsWith('>') ? s : `<${s.replace(/^<|>$/g, '')}>`;
             };
 
             const chain = refsResult.rows
-                .map(r => ({ id: normalizeMsgId(r.message_id), tipo: r.tipo_interacao }))
+                .map(r => ({ id: normalizeMsgId(r.message_id), tipo: r.tipo_interacao, assunto: r.assunto, descricao: r.descricao, data: r.data_ocorrencia }))
                 .filter(r => !!r.id);
 
-            const parentId = chain.length ? chain[chain.length - 1].id : null;
+            const lastReceived = [...chain].reverse().find(r => /Recebida/i.test(r.tipo));
+            const parentId = (lastReceived ? lastReceived.id : (chain.length ? chain[chain.length - 1].id : null));
             const referencesArray = chain.map(r => r.id);
 
-            const lastSubjectResult = await client.query(
-                `SELECT assunto
-                 FROM historico_garantias
-                 WHERE garantia_id = $1 AND assunto IS NOT NULL
-                 ORDER BY data_ocorrencia DESC
-                 LIMIT 1`,
-                [id]
-            );
-            const lastSubject = lastSubjectResult.rows[0]?.assunto || null;
+            const lastSubject = lastReceived?.assunto || chain[chain.length - 1]?.assunto || null;
             const computedSubject = lastSubject
                 ? (/^re:/i.test(lastSubject) ? lastSubject : `Re: ${lastSubject}`)
                 : `Re: Garantia - NI ${notaInterna}`;
+            
             assuntoParaSalvar = computedSubject;
 
-            const emailHtmlComAssinatura = `<p>${String(descricao || '').replace(/\n/g, '<br>')}</p><br><p>Atenciosamente,<br>Equipe de Qualidade<br>AC Acessórios.</p>`;
-            const emailTextComAssinatura = `${descricao || ''}\n\nAtenciosamente,\nEquipe de Qualidade\nAC Acessórios.`;
+            // MODIFICADO: Constrói o corpo do e-mail com o histórico citado.
+            let corpoEmailCitado = '';
+            const ultimoEmailDaConversa = [...chain].reverse()[0];
+
+            if (ultimoEmailDaConversa) {
+                const dataFormatada = new Date(ultimoEmailDaConversa.data).toLocaleString('pt-BR', { dateStyle: 'full', timeStyle: 'short' });
+                let remetenteAnterior = '';
+                let corpoAnterior = ultimoEmailDaConversa.descricao;
+
+                if (ultimoEmailDaConversa.tipo === 'Resposta Recebida') {
+                    remetenteAnterior = ultimoEmailDaConversa.descricao.split('<br>')[0].replace('<b>De:</b>', '').trim();
+                } else { // 'Email Enviado'
+                    remetenteAnterior = process.env.EMAIL_FROM || 'Gestão de Qualidade';
+                }
+
+                corpoEmailCitado = `
+                    <br><br>
+                    <div style="border-left: 2px solid #ccc; margin-left: 5px; padding-left: 10px;">
+                        <p><b>De:</b> ${remetenteAnterior}<br>
+                        <b>Enviada em:</b> ${dataFormatada}<br>
+                        <b>Para:</b> ${destinatarioFinal}<br>
+                        ${copiasEmail ? `<b>Cc:</b> ${copiasEmail}<br>` : ''}
+                        <b>Assunto:</b> ${ultimoEmailDaConversa.assunto || ''}</p>
+                        ${corpoAnterior}
+                    </div>
+                `;
+            }
+
+            const emailHtmlComAssinatura = `<p>${descricao.replace(/\n/g, '<br>')}</p><br><p>Atenciosamente,<br>Equipa de Qualidade<br>AC Acessórios.</p>${corpoEmailCitado}`;
+            const emailTextComAssinatura = `${descricao}\n\n---\n${ultimoEmailDaConversa ? `Em ${new Date(ultimoEmailDaConversa.data).toLocaleString('pt-BR')}, ${ultimoEmailDaConversa.descricao.replace(/<[^>]+>/g, '')}` : ''}\n\nAtenciosamente,\nEquipa de Qualidade\nAC Acessórios.`;
 
             const emailData = {
                 to: destinatarioFinal,
@@ -272,7 +285,7 @@ router.post('/garantias/:id/update', upload.array('anexos', 10), async (req, res
                 subject: computedSubject,
                 html: emailHtmlComAssinatura,
                 text: emailTextComAssinatura,
-                attachments: (req.files || []).map(f => ({ filename: f.originalname, path: f.path })),
+                attachments: req.files.map(f => ({ filename: f.originalname, path: f.path })),
             };
 
             if (parentId) {
@@ -289,20 +302,13 @@ router.post('/garantias/:id/update', upload.array('anexos', 10), async (req, res
         }
 
         const historicoDesc = descricao;
-        const historicoTipo = (enviar_email === 'true') ? 'Resposta Enviada' : (tipo_interacao || 'Nota Interna');
+        const historicoTipo = enviar_email === 'true' ? 'Resposta Enviada' : (tipo_interacao || 'Nota Interna');
 
         const historicoQuery = `
             INSERT INTO historico_garantias (garantia_id, descricao, tipo_interacao, foi_visto, message_id, assunto) 
             VALUES ($1, $2, $3, $4, $5, $6)
         `;
-        await client.query(historicoQuery, [
-            id,
-            historicoDesc,
-            historicoTipo,
-            enviar_email === 'true',
-            messageIdParaSalvar,
-            assuntoParaSalvar
-        ]);
+        await client.query(historicoQuery, [id, historicoDesc, historicoTipo, enviar_email === 'true', messageIdParaSalvar, assuntoParaSalvar]);
 
         if (req.files && req.files.length > 0) {
             const anexoQuery = 'INSERT INTO anexos_garantias (garantia_id, nome_ficheiro, path_ficheiro) VALUES ($1, $2, $3)';
