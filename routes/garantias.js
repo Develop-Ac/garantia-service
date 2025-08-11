@@ -103,16 +103,17 @@ router.post('/garantias', upload.array('anexos', 10), async (req, res) => {
             INSERT INTO garantias (
                 erp_fornecedor_id, nome_fornecedor, email_fornecedor, produtos, 
                 nota_interna, descricao, tipo_garantia, nfs_compra, status, 
-                protocolo_fornecedor
+                protocolo_fornecedor, copias_email
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             RETURNING id;
         `;
         const garantiaValues = [
             erpFornecedorId, nomeFornecedor, emailFornecedor, produtos, 
             notaFiscal, descricao, tipoGarantia, nfsCompra, 
             'Aguardando Aprovação do Fornecedor',
-            protocoloFornecedor
+            protocoloFornecedor,
+            copiasEmail // Salva os e-mails em cópia
         ];
         const result = await client.query(garantiaQuery, garantiaValues);
         const novaGarantiaId = result.rows[0].id;
@@ -132,7 +133,7 @@ router.post('/garantias', upload.array('anexos', 10), async (req, res) => {
 
         if (outrosMeios !== 'true') {
             const emailData = {
-                to: emailFornecedor,
+                to: emailFornecedor,                
                 cc: copiasEmail,
                 subject: `Abertura de Processo de ${tipoGarantia} - Nota Fiscal ${nfsCompra || 'N/A'}`,
                 text: `Prezados,\n\nAbrimos um processo de garantia (${tipoGarantia}) para o(s) seguinte(s) produto(s):\n- ${produtos}\n\nReferente à(s) NF(s) de Compra: ${nfsCompra || 'N/A'}\n\nCódigo de Controle Interno: ${notaFiscal}\n\nDescrição do problema: ${descricao}\n\nPor favor, verifiquem os anexos para mais detalhes.\n\nAtenciosamente,\nEquipa de Qualidade AC Acessórios.`,
@@ -216,6 +217,7 @@ router.put('/garantias/:id/status', async (req, res) => {
 // Rota POST /api/garantias/:id/update
 router.post('/garantias/:id/update', upload.array('anexos', 10), async (req, res) => {
     const { id } = req.params;
+    // MODIFICADO: Adicionado 'destinatario' para ser lido do corpo da requisição.
     const { descricao, tipo_interacao, enviar_email, destinatario } = req.body;
     const client = await db.getLocalClient();
 
@@ -238,9 +240,16 @@ router.post('/garantias/:id/update', upload.array('anexos', 10), async (req, res
             }
         }
 
-        if (enviar_email === 'true' && destinatario) {
-            const garantiaInfo = await client.query('SELECT nota_interna FROM garantias WHERE id = $1', [id]);
-            const notaInterna = garantiaInfo.rows[0].nota_interna;
+        if (enviar_email === 'true') {
+            // MODIFICADO: A verificação agora usa o 'destinatario' recebido do frontend.
+            if (!destinatario) {
+                throw new Error('O e-mail do destinatário não foi fornecido.');
+            }
+            
+            const garantiaInfoResult = await client.query('SELECT nota_interna, copias_email FROM garantias WHERE id = $1', [id]);
+            const garantiaInfo = garantiaInfoResult.rows[0];
+            const notaInterna = garantiaInfo.nota_interna;
+            const copiasEmail = garantiaInfo.copias_email;
             
             const lastMessageResult = await client.query(
                 `SELECT message_id FROM historico_garantias 
@@ -250,13 +259,16 @@ router.post('/garantias/:id/update', upload.array('anexos', 10), async (req, res
             );
 
             const lastMessageId = lastMessageResult.rows.length > 0 ? lastMessageResult.rows[0].message_id : null;
+            
+            const emailHtmlComAssinatura = `<p>${descricao.replace(/\n/g, '<br>')}</p><br><p>Atenciosamente,<br>Equipa de Qualidade<br>AC Acessórios.</p>`;
+            const emailTextComAssinatura = `${descricao}\n\nAtenciosamente,\nEquipa de Qualidade\nAC Acessórios.`;
 
             const emailData = {
                 to: destinatario,
-                // MODIFICADO: A linha 'cc' foi removida para não enviar cópia para si mesmo.
+                cc: copiasEmail,
                 subject: `Re: Garantia - NI ${notaInterna}`,
-                html: `<p>${descricao.replace(/\n/g, '<br>')}</p>`,
-                text: descricao,
+                html: emailHtmlComAssinatura,
+                text: emailTextComAssinatura,
                 attachments: req.files.map(file => ({
                     filename: file.originalname,
                     path: file.path
