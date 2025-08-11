@@ -262,15 +262,16 @@ router.post('/garantias/:id/update', upload.array('anexos', 10), async (req, res
                 throw new Error('O e-mail do destinatário não foi encontrado.');
             }
             
-            // MODIFICADO: Busca TODA a cadeia de message_ids em ordem cronológica.
+            // 1. Pega TODA a cadeia de message_ids em ordem cronológica
             const refsResult = await client.query(
-                `SELECT message_id FROM historico_garantias
+                `SELECT message_id, tipo_interacao
+                 FROM historico_garantias
                  WHERE garantia_id = $1 AND message_id IS NOT NULL
                  ORDER BY data_ocorrencia ASC`,
                 [id]
             );
 
-            // Função para garantir que os IDs estejam no formato <id@dominio.com>
+            // 2. Normaliza os IDs para garantir que estejam no formato <id@dominio.com>
             const normalizeMsgId = (v) => {
                 if (!v) return null;
                 const s = String(v).trim();
@@ -278,26 +279,39 @@ router.post('/garantias/:id/update', upload.array('anexos', 10), async (req, res
                 return `<${s.replace(/^<|>$/g, '')}>`;
             };
 
-            const referencesChain = refsResult.rows
-                .map(r => normalizeMsgId(r.message_id))
-                .filter(Boolean); // Remove quaisquer valores nulos/vazios
+            const chain = refsResult.rows
+                .map(r => ({ id: normalizeMsgId(r.message_id), tipo: r.tipo_interacao }))
+                .filter(r => !!r.id);
+
+            // 3. O parentId é o último e-mail RECEBIDO, senão o último da cadeia.
+            const lastReceived = [...chain].reverse().find(r => /Recebida/i.test(r.tipo));
+            const parentId = (lastReceived ? lastReceived.id : (chain.length ? chain[chain.length - 1].id : null));
+
+            // 4. A cadeia de referências é um ARRAY com todos os IDs.
+            const referencesArray = chain.map(r => r.id);
 
             const emailHtmlComAssinatura = `<p>${descricao.replace(/\n/g, '<br>')}</p><br><p>Atenciosamente,<br>Equipa de Qualidade<br>AC Acessórios.</p>`;
             const emailTextComAssinatura = `${descricao}\n\nAtenciosamente,\nEquipa de Qualidade\nAC Acessórios.`;
 
+            // 5. Monta os dados do e-mail
             const emailData = {
                 to: destinatarioFinal,
                 cc: copiasEmail,
                 subject: `Re: Garantia - NI ${notaInterna}`,
                 html: emailHtmlComAssinatura,
                 text: emailTextComAssinatura,
-                attachments: req.files.map(file => ({ filename: file.originalname, path: file.path })),
+                attachments: req.files.map(f => ({ filename: f.originalname, path: f.path })),
             };
 
-            // MODIFICADO: Adiciona os cabeçalhos de resposta apenas se uma cadeia de e-mails já existir.
-            if (referencesChain.length > 0) {
-                emailData.inReplyTo = referencesChain[referencesChain.length - 1]; // O ID mais recente
-                emailData.references = referencesChain.join(' '); // A cadeia completa, separada por espaços
+            // 6. Injeta os cabeçalhos de resposta se houver um e-mail pai.
+            if (parentId) {
+                emailData.inReplyTo = parentId;
+                emailData.references = referencesArray; // Envia como array
+                // Adiciona também os cabeçalhos "raw" para máxima compatibilidade
+                emailData.headers = {
+                    'In-Reply-To': parentId,
+                    'References': referencesArray.join(' '),
+                };
             }
 
             const info = await emailService.sendMail(emailData);

@@ -4,21 +4,22 @@ const nodemailer = require('nodemailer');
 const transporter = nodemailer.createTransport({
   host: process.env.EMAIL_HOST,
   port: process.env.EMAIL_PORT,
-  secure: process.env.EMAIL_PORT == 465, // true para a porta 465, false para as outras
+  secure: process.env.EMAIL_PORT == 465,
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
   },
+  // NOVO: Ativa os logs para depuração detalhada do envio de e-mails.
+  logger: true,
+  debug: true,
 });
 
 // Função para enviar um e-mail
 async function sendMail(mailOptions) {
   try {
-    // MODIFICADO: Agora, o objeto mailOptions completo é passado para o sendMail.
-    // Isso garante que os cabeçalhos 'inReplyTo' e 'references' sejam incluídos.
     const info = await transporter.sendMail({
       from: process.env.EMAIL_FROM,
-      ...mailOptions // Usa o spread operator para incluir to, cc, subject, text, html, etc.
+      ...mailOptions
     });
     console.log('E-mail enviado: %s', info.messageId);
     return info;
