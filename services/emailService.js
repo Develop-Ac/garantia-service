@@ -14,14 +14,11 @@ const transporter = nodemailer.createTransport({
 // Função para enviar um e-mail
 async function sendMail(mailOptions) {
   try {
+    // MODIFICADO: Agora, o objeto mailOptions completo é passado para o sendMail.
+    // Isso garante que os cabeçalhos 'inReplyTo' e 'references' sejam incluídos.
     const info = await transporter.sendMail({
       from: process.env.EMAIL_FROM,
-      to: mailOptions.to,
-      cc: mailOptions.cc,
-      subject: mailOptions.subject,
-      text: mailOptions.text,
-      html: mailOptions.html,
-      attachments: mailOptions.attachments
+      ...mailOptions // Usa o spread operator para incluir to, cc, subject, text, html, etc.
     });
     console.log('E-mail enviado: %s', info.messageId);
     return info;
@@ -31,12 +28,6 @@ async function sendMail(mailOptions) {
   }
 }
 
-// Função para obter o URL de preview do Ethereal
-function getTestMessageUrl(info) {
-    return nodemailer.getTestMessageUrl(info);
-}
-
 module.exports = {
   sendMail,
-  getTestMessageUrl
 };
