@@ -14,8 +14,10 @@ app.use('/form_templates', express.static(path.join(__dirname, 'form_templates')
 // --- Rotas da API ---
 const garantiasRoutes = require('./routes/garantias');
 const fornecedoresRoutes = require('./routes/fornecedores');
+const emailsRoutes = require('./routes/emails');
 app.use('/api', garantiasRoutes);
 app.use('/api', fornecedoresRoutes);
+app.use('/api', emailsRoutes);
 
 // --- Rota de Verificação de Status ---
 app.get('/status', (req, res) => {
