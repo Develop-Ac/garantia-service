@@ -41,6 +41,15 @@ Defina `MINIO_ENDPOINTS` com a lista de IPs/hosts apresentados pelo Easypanel (A
   npm run build && npm start
   ```
 
+## Deploy com Docker / Easypanel
+
+1. Gere a imagem (o processo usa multi-stage build para compilar o NestJS e incluir as dependencias do ODBC/minio):
+   ```bash
+   docker build -t garantias-backend .
+   ```
+2. No Easypanel crie um app Dockerfile, aponte para este repositorio e configure suas variaveis `.env` diretamente no painel (as variaveis do bloco `MINIO_*`, `DATABASE_URL`, `MSSQL_*` etc.). O container expoe a porta `3000`.
+3. Opcional: defina um volume persistente para `form_templates` se precisar editar os modelos diretamente no servidor.
+
 ## Estrutura principal
 
 - `src/garantias`: modulo completo com regras de negocio, upload de anexos e integracao de e-mails.
