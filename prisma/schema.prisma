@@ -1,0 +1,157 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Garantia {
+  id                        Int                 @id @default(autoincrement())
+  erpFornecedorId           Int?                @map("erp_fornecedor_id")
+  nomeFornecedor            String              @map("nome_fornecedor") @db.VarChar(255)
+  emailFornecedor           String?             @map("email_fornecedor") @db.VarChar(255)
+  produtos                  String
+  notaInterna               String              @map("nota_interna") @db.VarChar(255)
+  descricao                 String?
+  tipoGarantia              String?             @map("tipo_garantia") @db.VarChar(100)
+  nfsCompra                 String?             @map("nfs_compra") @db.VarChar(255)
+  status                    Int                 @default(1)
+  createdAt                 DateTime?           @default(now()) @map("data_criacao") @db.Timestamptz(6)
+  precisaNotaFiscal         Boolean?            @map("precisa_nota_fiscal")
+  cfop                      String?             @db.VarChar(10)
+  fretePorContaDe           String?             @map("frete_por_conta_de") @db.VarChar(50)
+  transportadoraRazaoSocial String?             @map("transportadora_razao_social") @db.VarChar(255)
+  transportadoraCnpj        String?             @map("transportadora_cnpj") @db.VarChar(20)
+  transportadoraIe          String?             @map("transportadora_ie") @db.VarChar(20)
+  transportadoraEndereco    String?             @map("transportadora_endereco")
+  numeroNfDevolucao         String?             @map("numero_nf_devolucao") @db.VarChar(50)
+  dataColetaEnvio           DateTime?           @map("data_coleta_envio") @db.Date
+  nfAbatidaBoleto           String?             @map("nf_abatida_boleto") @db.VarChar(50)
+  tipoCreditoFinal          String?             @map("tipo_credito_final") @db.VarChar(255)
+  protocoloFornecedor       String?             @map("protocolo_fornecedor") @db.VarChar(255)
+  temNovaInteracao          Boolean?            @default(false) @map("tem_nova_interacao")
+  copiasEmail               String?             @map("copias_email")
+  transportadoraCidade      String?             @map("transportadora_cidade")
+  transportadoraUf          String?             @map("transportadora_uf")
+  codigoColetaEnvio         String?             @map("codigo_coleta_envio")
+  obs                       String?
+  valorCreditoTotal         Decimal?            @db.Decimal(12, 2) @map("valor_credito_total")
+  valorCreditoUtilizado     Decimal             @default(0) @db.Decimal(12, 2) @map("valor_credito_utilizado")
+
+  historicos      HistoricoGarantia[]
+  anexos          AnexoGarantia[]
+  abatimentos     GarantiaAbatimento[]
+  emailsCaixa     EmailCaixaEntrada[]
+
+  @@map("garantias")
+}
+
+model HistoricoGarantia {
+  id             Int       @id @default(autoincrement())
+  garantiaId     Int       @map("garantia_id")
+  descricao      String
+  tipoInteracao  String    @map("tipo_interacao") @db.VarChar(100)
+  dataOcorrencia DateTime? @default(now()) @map("data_ocorrencia") @db.Timestamptz(6)
+  foiVisto       Boolean?  @default(true) @map("foi_visto")
+  messageId      String?   @map("message_id")
+  assunto        String?
+
+  garantia Garantia @relation(fields: [garantiaId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@map("historico_garantias")
+}
+
+model AnexoGarantia {
+  id           Int       @id @default(autoincrement())
+  garantiaId   Int       @map("garantia_id")
+  nomeFicheiro String    @map("nome_ficheiro") @db.VarChar(255)
+  pathFicheiro String    @map("path_ficheiro") @db.VarChar(255)
+  dataUpload   DateTime? @default(now()) @map("data_upload") @db.Timestamptz(6)
+
+  garantia Garantia @relation(fields: [garantiaId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@map("anexos_garantias")
+}
+
+model GarantiaAbatimento {
+  id          BigInt   @id @default(autoincrement())
+  garantiaId  Int      @map("garantia_id")
+  nf          String
+  parcela     String
+  vencimento  DateTime @db.Date
+  valor       Decimal  @db.Decimal(12, 2)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  garantia Garantia @relation(fields: [garantiaId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@map("garantias_abatimentos")
+}
+
+model FornecedorConfig {
+  id              Int    @id @default(autoincrement())
+  erpFornecedorId Int    @unique @map("erp_fornecedor_id")
+  processoTipo    String @map("processo_tipo") @db.VarChar(50)
+  portalLink      String? @map("portal_link")
+  formularioPath  String? @map("formulario_path")
+  nomeFormulario  String? @map("nome_formulario") @db.VarChar(255)
+
+  @@map("fornecedores_config")
+}
+
+model EmailCaixaEntrada {
+  id              Int        @id @default(autoincrement())
+  messageId       String     @unique @map("message_id")
+  garantiaId      Int?       @map("garantia_id")
+  remetente       String?
+  assunto         String?
+  corpoHtml       String?    @map("corpo_html")
+  dataRecebimento DateTime?  @map("data_recebimento") @db.Timestamptz(6)
+  foiProcessado   Boolean?   @default(false) @map("foi_processado")
+  replyTo         String?    @map("reply_to")
+  toList          String[]   @map("to_list") @default([])
+  ccList          String[]   @map("cc_list") @default([])
+  bccList         String[]   @map("bcc_list") @default([])
+  attachments     Json?      @default("[]")
+
+  garantia Garantia? @relation(fields: [garantiaId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([garantiaId], map: "idx_caixa_entrada_garantia_id")
+  @@map("caixa_de_entrada_emails")
+}
+
+model EmailAttachment {
+  id            BigInt  @id @default(autoincrement())
+  emailId       BigInt? @map("email_id")
+  filename      String?
+  mimeType      String? @map("mime_type")
+  sizeBytes     BigInt? @map("size_bytes")
+  contentId     String? @map("content_id")
+  contentBase64 String? @map("content_base64")
+
+  @@map("email_attachments")
+  @@ignore
+}
+
+model EmailRegistro {
+  id              BigInt    @id @default(autoincrement())
+  messageId       String?   @unique @map("message_id")
+  remetente       String?
+  assunto         String?
+  corpoHtml       String?   @map("corpo_html")
+  dataRecebimento DateTime? @map("data_recebimento") @db.Timestamptz(6)
+  replyTo         String?   @map("reply_to")
+  toList          Json?     @map("to_list")
+  ccList          Json?     @map("cc_list")
+  bccList         Json?     @map("bcc_list")
+  controleInterno String?   @map("controle_interno")
+  notaInterna     String?   @map("nota_interna")
+  garantiaId      BigInt?   @map("garantia_id")
+  createdAt       DateTime? @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([garantiaId], map: "idx_emails_garantia_id")
+  @@index([notaInterna], map: "idx_emails_nota_interna")
+  @@map("emails")
+  @@ignore
+}
