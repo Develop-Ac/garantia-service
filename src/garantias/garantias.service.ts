@@ -500,16 +500,16 @@ export class GarantiasService {
     key = key.replace(/^https?:\/\/[^/]+\//i, '');
     key = key.replace(/^\/+/, '');
 
-    const bucketPrefix = `${bucket}/`;
-    if (key.startsWith(bucketPrefix)) {
-      key = key.slice(bucketPrefix.length);
+    const normalizedPrefix = prefix ? (prefix.endsWith('/') ? prefix : `${prefix}/`) : '';
+
+    if (normalizedPrefix) {
+      if (key.startsWith(normalizedPrefix)) {
+        return key;
+      }
+      return `${normalizedPrefix}${key}`;
     }
 
-    if (prefix && key.startsWith(prefix)) {
-      return key;
-    }
-
-    return prefix ? `${prefix}${key}` : key;
+    return key;
   }
 
   private extractSender(html?: string | null) {
