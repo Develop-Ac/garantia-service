@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { AnexoGarantia, Garantia, HistoricoGarantia, Prisma } from '@prisma/client';
@@ -35,6 +35,7 @@ interface TimelineHistorico {
 export class GarantiasService {
   private readonly THREAD_LIMIT = 10;
   private minioPromise: Promise<Awaited<ReturnType<typeof getMinioConnection>>> | null = null;
+  private readonly logger = new Logger(GarantiasService.name);
 
   constructor(
     private readonly prisma: PrismaService,
@@ -160,16 +161,15 @@ export class GarantiasService {
 
         const text = `Prezados,\n\nAbrimos um processo de ${dto.tipoGarantia} para o(s) seguinte(s) produto(s):\n${dto.produtos}\n\nReferente a(s) NF(s) de Compra: ${dto.nfsCompra ?? 'N/A'}\nCodigo de Controle Interno: ${dto.notaFiscal}\nDescricao do problema: ${dto.descricao}\n\nAtenciosamente,\n${process.env.EMAIL_FROM_NAME ?? 'Equipe de Qualidade AC Acessorios'}`;
 
+        const attachments = await this.buildEmailAttachments(anexos);
+
         const emailResponse = await this.emailService.send({
           to: dto.emailFornecedor,
           cc: dto.copiasEmail || undefined,
           subject,
           html,
           text,
-          attachments: anexos?.map((file) => ({
-            filename: file.originalname,
-            path: this.getFileStoragePath(file),
-          })),
+          attachments,
         });
 
         descricaoHistorico = html;
@@ -303,13 +303,14 @@ export class GarantiasService {
         if (parentId) headers['In-Reply-To'] = parentId;
         if (thread.length) headers['References'] = thread.map((item) => item.id).join(' ');
 
+        const attachments = await this.buildEmailAttachments(anexos);
         const email = await this.emailService.send({
           to: destinatario,
           cc: ccFinal,
           subject: computedSubject,
           html: bodyHtml,
           text: bodyText,
-          attachments: anexos?.map((file) => ({ filename: file.originalname, path: file.path })),
+          attachments,
           headers: Object.keys(headers).length ? headers : undefined,
         });
 
@@ -485,6 +486,41 @@ export class GarantiasService {
   private getFileStoragePath(file: Express.Multer.File) {
     const enriched = file as Express.Multer.File & { location?: string; key?: string };
     return enriched.key ?? enriched.path ?? enriched.location ?? file.filename ?? '';
+  }
+
+  private async resolveAttachmentPath(file: Express.Multer.File): Promise<string | undefined> {
+    const enriched = file as Express.Multer.File & { location?: string; key?: string };
+    if (enriched.location && /^https?:\/\//i.test(enriched.location)) return enriched.location;
+    if (typeof file.path === 'string' && /^https?:\/\//i.test(file.path)) return file.path;
+
+    const key = enriched.key ?? this.getFileStoragePath(file);
+    if (!key) return undefined;
+
+    try {
+      const { s3, bucket, prefix } = await this.getMinioClient();
+      const normalizedKey = this.normalizeStorageKey(key, bucket, prefix);
+      const command = new GetObjectCommand({
+        Bucket: bucket,
+        Key: normalizedKey,
+      });
+      return await getSignedUrl(s3, command, { expiresIn: 60 * 15 });
+    } catch (error) {
+      this.logger.warn(`Falha ao gerar URL temporária para ${file.originalname}: ${error}`);
+      return undefined;
+    }
+  }
+
+  private async buildEmailAttachments(anexos?: Express.Multer.File[]) {
+    if (!anexos?.length) return undefined;
+    const mapped = await Promise.all(
+      anexos.map(async (file) => {
+        const path = await this.resolveAttachmentPath(file);
+        if (!path) return null;
+        return { filename: file.originalname, path };
+      }),
+    );
+    const filtered = mapped.filter((item): item is { filename: string; path: string } => Boolean(item));
+    return filtered.length ? filtered : undefined;
   }
 
   private getMinioClient() {
