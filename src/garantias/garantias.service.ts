@@ -484,7 +484,7 @@ export class GarantiasService {
 
   private getFileStoragePath(file: Express.Multer.File) {
     const enriched = file as Express.Multer.File & { location?: string; key?: string };
-    return enriched.location ?? enriched.path ?? enriched.key ?? file.filename ?? '';
+    return enriched.key ?? enriched.path ?? enriched.location ?? file.filename ?? '';
   }
 
   private getMinioClient() {
