@@ -33,6 +33,15 @@ async function bootstrap() {
   });
 
   app.setGlobalPrefix('api');
+
+  const httpServer = app.getHttpAdapter().getInstance();
+  httpServer.get('/', (req, res) => {
+    const requesterIp =
+      req.headers['x-forwarded-for'] ?? req.socket?.remoteAddress ?? req.connection?.remoteAddress ?? 'unknown';
+    Logger.log(`Requisicao de status recebida de ${requesterIp}`, 'Bootstrap');
+    res.status(200).send('API de Garantias ativa. Utilize o prefixo /api para acessar as rotas.');
+  });
+
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
