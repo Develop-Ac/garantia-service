@@ -1,9 +1,13 @@
 import { BadRequestException, Controller, Get, NotFoundException, Param } from '@nestjs/common';
 import { ErpService } from './erp.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 @Controller('dados-erp')
 export class ErpController {
-  constructor(private readonly erpService: ErpService) {}
+  constructor(
+    private readonly erpService: ErpService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   @Get('venda/:ni')
   async buscarDadosVenda(@Param('ni') ni: string) {
@@ -57,6 +61,10 @@ export class ErpController {
     const emailResult = await this.erpService.query(emailQuery, [cliCodigo]);
     const emails = emailResult.map((row: any) => row.EMAIL);
 
+    const fornecedorConfig = await this.prisma.fornecedorConfig.findUnique({
+      where: { erpFornecedorId: Number(cliCodigo) },
+    });
+
     return {
       cliente: {
         CLI_CODIGO: cliCodigo,
@@ -64,6 +72,16 @@ export class ErpController {
         EMAILS: emails,
       },
       produtos,
+      fornecedorConfig: fornecedorConfig
+        ? {
+            id: fornecedorConfig.id,
+            erp_fornecedor_id: fornecedorConfig.erpFornecedorId,
+            processo_tipo: fornecedorConfig.processoTipo,
+            portal_link: fornecedorConfig.portalLink,
+            formulario_path: fornecedorConfig.formularioPath,
+            nome_formulario: fornecedorConfig.nomeFormulario,
+          }
+        : null,
     };
   }
 }
