@@ -1,4 +1,16 @@
-import { Body, Controller, Get, Headers, Param, ParseIntPipe, Post, Put, UploadedFiles, UseInterceptors } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Headers,
+  Param,
+  ParseIntPipe,
+  Post,
+  Put,
+  Query,
+  UploadedFiles,
+  UseInterceptors,
+} from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { Express } from 'express';
 import { GarantiasService } from './garantias.service';
@@ -14,6 +26,11 @@ export class GarantiasController {
   @Get()
   listar(): Promise<any> {
     return this.garantiasService.listarTodas();
+  }
+
+  @Get('arquivos/url')
+  gerarLinkDownload(@Query('key') key: string) {
+    return this.garantiasService.gerarUrlArquivo(key);
   }
 
   @Get(':id')

@@ -1,4 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { GetObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { AnexoGarantia, Garantia, HistoricoGarantia, Prisma } from '@prisma/client';
 import { Express } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
@@ -7,6 +9,7 @@ import { CriarGarantiaDto } from './dto/criar-garantia.dto';
 import { AtualizarStatusGarantiaDto } from './dto/atualizar-status.dto';
 import { AtualizarGarantiaDto } from './dto/atualizar-garantia.dto';
 import { WebhookRespostaDto } from './dto/webhook-resposta.dto';
+import { getMinioConnection } from '../storage/minio-config';
 
 interface TimelineEmail {
   type: 'email';
@@ -31,6 +34,7 @@ interface TimelineHistorico {
 @Injectable()
 export class GarantiasService {
   private readonly THREAD_LIMIT = 10;
+  private minioPromise: Promise<Awaited<ReturnType<typeof getMinioConnection>>> | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -75,6 +79,30 @@ export class GarantiasService {
       anexos: garantia.anexos.map((a) => this.serializeAnexo(a)),
       timeline,
     };
+  }
+
+  async gerarUrlArquivo(key: string) {
+    if (!key || key.trim().length === 0) {
+      throw new BadRequestException('Informe a chave do arquivo.');
+    }
+
+    const trimmed = key.trim();
+    if (/^https?:\/\//i.test(trimmed)) {
+      return { ok: true, url: trimmed };
+    }
+
+    const { s3, bucket, prefix } = await this.getMinioClient();
+    const finalKey = this.normalizeStorageKey(trimmed, bucket, prefix);
+    try {
+      const command = new GetObjectCommand({
+        Bucket: bucket,
+        Key: finalKey,
+      });
+      const url = await getSignedUrl(s3, command, { expiresIn: 60 * 15 });
+      return { ok: true, url };
+    } catch (error) {
+      throw new BadRequestException('Não foi possível gerar o link de download.');
+    }
   }
 
   async criar(dto: CriarGarantiaDto, anexos: Express.Multer.File[]) {
@@ -457,6 +485,31 @@ export class GarantiasService {
   private getFileStoragePath(file: Express.Multer.File) {
     const enriched = file as Express.Multer.File & { location?: string; key?: string };
     return enriched.location ?? enriched.path ?? enriched.key ?? file.filename ?? '';
+  }
+
+  private getMinioClient() {
+    if (!this.minioPromise) {
+      this.minioPromise = getMinioConnection();
+    }
+    return this.minioPromise;
+  }
+
+  private normalizeStorageKey(rawKey: string, bucket: string, prefix: string) {
+    let key = rawKey.trim();
+    key = key.split('?')[0];
+    key = key.replace(/^https?:\/\/[^/]+\//i, '');
+    key = key.replace(/^\/+/, '');
+
+    const bucketPrefix = `${bucket}/`;
+    if (key.startsWith(bucketPrefix)) {
+      key = key.slice(bucketPrefix.length);
+    }
+
+    if (prefix && key.startsWith(prefix)) {
+      return key;
+    }
+
+    return prefix ? `${prefix}${key}` : key;
   }
 
   private extractSender(html?: string | null) {
