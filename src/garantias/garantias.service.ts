@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException, Logger } from '@nestjs/common';
+﻿import { BadRequestException, ForbiddenException, Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { AnexoGarantia, Garantia, HistoricoGarantia, Prisma } from '@prisma/client';
@@ -10,6 +10,7 @@ import { AtualizarStatusGarantiaDto } from './dto/atualizar-status.dto';
 import { AtualizarGarantiaDto } from './dto/atualizar-garantia.dto';
 import { WebhookRespostaDto } from './dto/webhook-resposta.dto';
 import { getMinioConnection } from '../storage/minio-config';
+import { normalizeStorageKey } from '../storage/storage-key.util';
 
 interface TimelineEmail {
   type: 'email';
@@ -93,7 +94,7 @@ export class GarantiasService {
     }
 
     const { s3, bucket, prefix } = await this.getMinioClient();
-    const finalKey = this.normalizeStorageKey(trimmed, bucket, prefix);
+    const finalKey = normalizeStorageKey(trimmed, bucket, prefix);
     try {
       const command = new GetObjectCommand({
         Bucket: bucket,
@@ -490,26 +491,26 @@ export class GarantiasService {
 
   private async resolveAttachmentPath(file: Express.Multer.File): Promise<string | undefined> {
     const enriched = file as Express.Multer.File & { location?: string; key?: string };
+    const key = enriched.key ?? this.getFileStoragePath(file);
+
+    if (key) {
+      try {
+        const { s3, bucket, prefix } = await this.getMinioClient();
+        const normalizedKey = normalizeStorageKey(key, bucket, prefix);
+        const command = new GetObjectCommand({
+          Bucket: bucket,
+          Key: normalizedKey,
+        });
+        return await getSignedUrl(s3, command, { expiresIn: 60 * 15 });
+      } catch (error) {
+        this.logger.warn(`Falha ao gerar URL temporaria para ${file.originalname}: ${error}`);
+      }
+    }
+
     if (enriched.location && /^https?:\/\//i.test(enriched.location)) return enriched.location;
     if (typeof file.path === 'string' && /^https?:\/\//i.test(file.path)) return file.path;
-
-    const key = enriched.key ?? this.getFileStoragePath(file);
-    if (!key) return undefined;
-
-    try {
-      const { s3, bucket, prefix } = await this.getMinioClient();
-      const normalizedKey = this.normalizeStorageKey(key, bucket, prefix);
-      const command = new GetObjectCommand({
-        Bucket: bucket,
-        Key: normalizedKey,
-      });
-      return await getSignedUrl(s3, command, { expiresIn: 60 * 15 });
-    } catch (error) {
-      this.logger.warn(`Falha ao gerar URL temporária para ${file.originalname}: ${error}`);
-      return undefined;
-    }
+    return undefined;
   }
-
   private async buildEmailAttachments(anexos?: Express.Multer.File[]) {
     if (!anexos?.length) return undefined;
     const mapped = await Promise.all(
@@ -528,25 +529,6 @@ export class GarantiasService {
       this.minioPromise = getMinioConnection();
     }
     return this.minioPromise;
-  }
-
-  private normalizeStorageKey(rawKey: string, bucket: string, prefix: string) {
-    let key = rawKey.trim();
-    key = key.split('?')[0];
-    key = key.replace(/^https?:\/\/[^/]+\//i, '');
-    key = key.replace(/^\/+/, '');
-
-    const bucketPrefix = `${bucket}/`.replace(/\/+$/, '/');
-    if (key.startsWith(bucketPrefix)) {
-      key = key.slice(bucketPrefix.length);
-    }
-
-    const normalizedPrefix = prefix ? (prefix.endsWith('/') ? prefix : `${prefix}/`) : '';
-    if (normalizedPrefix && key.startsWith(normalizedPrefix)) {
-      return key;
-    }
-
-    return normalizedPrefix ? `${normalizedPrefix}${key}` : key;
   }
 
   private extractSender(html?: string | null) {
@@ -663,3 +645,8 @@ export class GarantiasService {
     }
   }
 }
+
+
+
+
+

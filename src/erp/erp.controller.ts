@@ -1,6 +1,10 @@
-import { BadRequestException, Controller, Get, NotFoundException, Param } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Logger, NotFoundException, Param } from '@nestjs/common';
+import { GetObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { ErpService } from './erp.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { getMinioConnection } from '../storage/minio-config';
+import { normalizeStorageKey } from '../storage/storage-key.util';
 
 @Controller('dados-erp')
 export class ErpController {
@@ -8,6 +12,8 @@ export class ErpController {
     private readonly erpService: ErpService,
     private readonly prisma: PrismaService,
   ) {}
+
+  private readonly logger = new Logger(ErpController.name);
 
   @Get('venda/:ni')
   async buscarDadosVenda(@Param('ni') ni: string) {
@@ -64,6 +70,10 @@ export class ErpController {
     const fornecedorConfig = await this.prisma.fornecedorConfig.findUnique({
       where: { erpFornecedorId: Number(cliCodigo) },
     });
+    const formularioDownloadUrl =
+      fornecedorConfig?.formularioPath ?
+        await this.gerarFormularioUrl(fornecedorConfig.formularioPath) :
+        null;
 
     return {
       cliente: {
@@ -80,8 +90,31 @@ export class ErpController {
             portal_link: fornecedorConfig.portalLink,
             formulario_path: fornecedorConfig.formularioPath,
             nome_formulario: fornecedorConfig.nomeFormulario,
+            formulario_url: formularioDownloadUrl,
           }
         : null,
     };
+  }
+
+  private async gerarFormularioUrl(path: string): Promise<string | null> {
+    const trimmed = path?.trim();
+    if (!trimmed) {
+      return null;
+    }
+    if (/^https?:\/\//i.test(trimmed)) {
+      return trimmed;
+    }
+    try {
+      const { s3, bucket, prefix } = await getMinioConnection();
+      const normalizedKey = normalizeStorageKey(trimmed, bucket, prefix);
+      const command = new GetObjectCommand({
+        Bucket: bucket,
+        Key: normalizedKey,
+      });
+      return await getSignedUrl(s3, command, { expiresIn: 60 * 15 });
+    } catch (error) {
+      this.logger.warn(`Falha ao gerar link do formulario (${trimmed}): ${error}`);
+      return null;
+    }
   }
 }
