@@ -1,5 +1,5 @@
 -- Garantias
-CREATE TABLE "garantias" (
+CREATE TABLE "gar_garantias" (
     "id" SERIAL NOT NULL,
     "erp_fornecedor_id" INTEGER,
     "nome_fornecedor" VARCHAR(255) NOT NULL,
@@ -35,18 +35,18 @@ CREATE TABLE "garantias" (
 );
 
 -- Anexos de Garantias
-CREATE TABLE "anexos_garantias" (
+CREATE TABLE "gar_anexos_garantias" (
     "id" SERIAL NOT NULL,
     "garantia_id" INTEGER NOT NULL,
     "nome_ficheiro" VARCHAR(255) NOT NULL,
     "path_ficheiro" VARCHAR(255) NOT NULL,
     "data_upload" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "anexos_garantias_pkey" PRIMARY KEY ("id"),
-    CONSTRAINT "anexos_garantias_garantia_id_fkey" FOREIGN KEY ("garantia_id") REFERENCES "garantias"("id") ON DELETE CASCADE
+    CONSTRAINT "anexos_garantias_garantia_id_fkey" FOREIGN KEY ("garantia_id") REFERENCES "gar_garantias"("id") ON DELETE CASCADE
 );
 
 -- Garantias Abatimentos
-CREATE TABLE "garantias_abatimentos" (
+CREATE TABLE "gar_garantias_abatimentos" (
     "id" BIGSERIAL NOT NULL,
     "garantia_id" INTEGER NOT NULL,
     "nf" TEXT NOT NULL,
@@ -55,11 +55,11 @@ CREATE TABLE "garantias_abatimentos" (
     "valor" NUMERIC(12, 2) NOT NULL,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT "garantias_abatimentos_pkey" PRIMARY KEY ("id"),
-    CONSTRAINT "garantias_abatimentos_garantia_id_fkey" FOREIGN KEY ("garantia_id") REFERENCES "garantias"("id") ON DELETE CASCADE
+    CONSTRAINT "garantias_abatimentos_garantia_id_fkey" FOREIGN KEY ("garantia_id") REFERENCES "gar_garantias"("id") ON DELETE CASCADE
 );
 
 -- Historico de Garantias
-CREATE TABLE "historico_garantias" (
+CREATE TABLE "gar_historico_garantias" (
     "id" SERIAL NOT NULL,
     "garantia_id" INTEGER NOT NULL,
     "descricao" TEXT NOT NULL,
@@ -69,11 +69,11 @@ CREATE TABLE "historico_garantias" (
     "message_id" TEXT,
     "assunto" TEXT,
     CONSTRAINT "historico_garantias_pkey" PRIMARY KEY ("id"),
-    CONSTRAINT "historico_garantias_garantia_id_fkey" FOREIGN KEY ("garantia_id") REFERENCES "garantias"("id") ON DELETE CASCADE
+    CONSTRAINT "historico_garantias_garantia_id_fkey" FOREIGN KEY ("garantia_id") REFERENCES "gar_garantias"("id") ON DELETE CASCADE
 );
 
 -- Caixa de Entrada de Emails
-CREATE TABLE "caixa_de_entrada_emails" (
+CREATE TABLE "gar_caixa_de_entrada_emails" (
     "id" SERIAL NOT NULL,
     "message_id" TEXT NOT NULL,
     "garantia_id" INTEGER,
@@ -89,13 +89,13 @@ CREATE TABLE "caixa_de_entrada_emails" (
     "attachments" JSONB DEFAULT '[]'::jsonb,
     CONSTRAINT "caixa_de_entrada_emails_pkey" PRIMARY KEY ("id"),
     CONSTRAINT "caixa_de_entrada_emails_message_id_key" UNIQUE ("message_id"),
-    CONSTRAINT "caixa_de_entrada_emails_garantia_id_fkey" FOREIGN KEY ("garantia_id") REFERENCES "garantias"("id") ON DELETE SET NULL
+    CONSTRAINT "caixa_de_entrada_emails_garantia_id_fkey" FOREIGN KEY ("garantia_id") REFERENCES "gar_garantias"("id") ON DELETE SET NULL
 );
 
-CREATE INDEX IF NOT EXISTS "idx_caixa_entrada_garantia_id" ON "caixa_de_entrada_emails" ("garantia_id");
+CREATE INDEX IF NOT EXISTS "gar_idx_caixa_entrada_garantia_id" ON "gar_caixa_de_entrada_emails" ("garantia_id");
 
 -- Emails recebidos
-CREATE TABLE "emails" (
+CREATE TABLE "gar_emails" (
     "id" BIGSERIAL NOT NULL,
     "message_id" TEXT,
     "remetente" TEXT,
@@ -112,14 +112,14 @@ CREATE TABLE "emails" (
     "created_at" TIMESTAMPTZ DEFAULT NOW(),
     CONSTRAINT "emails_pkey" PRIMARY KEY ("id"),
     CONSTRAINT "emails_message_id_key" UNIQUE ("message_id"),
-    CONSTRAINT "emails_garantia_id_fkey" FOREIGN KEY ("garantia_id") REFERENCES "garantias"("id") ON DELETE SET NULL
+    CONSTRAINT "emails_garantia_id_fkey" FOREIGN KEY ("garantia_id") REFERENCES "gar_garantias"("id") ON DELETE SET NULL
 );
 
-CREATE INDEX IF NOT EXISTS "idx_emails_garantia_id" ON "emails" ("garantia_id");
-CREATE INDEX IF NOT EXISTS "idx_emails_nota_interna" ON "emails" ("nota_interna");
+CREATE INDEX IF NOT EXISTS "gar_idx_emails_garantia_id" ON "gar_emails" ("garantia_id");
+CREATE INDEX IF NOT EXISTS "gar_idx_emails_nota_interna" ON "gar_emails" ("nota_interna");
 
 -- Anexos de Emails
-CREATE TABLE "email_attachments" (
+CREATE TABLE "gar_email_attachments" (
     "id" BIGSERIAL NOT NULL,
     "email_id" BIGINT,
     "filename" TEXT,
@@ -128,11 +128,11 @@ CREATE TABLE "email_attachments" (
     "content_id" TEXT,
     "content_base64" TEXT,
     CONSTRAINT "email_attachments_pkey" PRIMARY KEY ("id"),
-    CONSTRAINT "email_attachments_email_id_fkey" FOREIGN KEY ("email_id") REFERENCES "emails"("id") ON DELETE CASCADE
+    CONSTRAINT "email_attachments_email_id_fkey" FOREIGN KEY ("email_id") REFERENCES "gar_emails"("id") ON DELETE CASCADE
 );
 
 -- Configuracao de Fornecedores
-CREATE TABLE "fornecedores_config" (
+CREATE TABLE "gar_fornecedores_config" (
     "id" SERIAL NOT NULL,
     "erp_fornecedor_id" INTEGER NOT NULL,
     "processo_tipo" VARCHAR(50) NOT NULL,
@@ -142,3 +142,5 @@ CREATE TABLE "fornecedores_config" (
     CONSTRAINT "fornecedores_config_pkey" PRIMARY KEY ("id"),
     CONSTRAINT "fornecedores_config_erp_fornecedor_id_key" UNIQUE ("erp_fornecedor_id")
 );
+
+

@@ -1,7 +1,7 @@
 -- Convert textual status to numeric codes (1-16) preserving existing data.
-ALTER TABLE "garantias" ADD COLUMN "status_temp" INTEGER;
+ALTER TABLE "gar_garantias" ADD COLUMN "status_temp" INTEGER;
 
-UPDATE "garantias"
+UPDATE "gar_garantias"
 SET "status_temp" = CASE
   WHEN "status" ~ '^\d+$' THEN CAST("status" AS INTEGER)
   WHEN LOWER("status") IN ('aguardando aprovacao do fornecedor', 'aguardando aprovação do fornecedor') THEN 1
@@ -23,9 +23,10 @@ SET "status_temp" = CASE
   ELSE 1
 END;
 
-ALTER TABLE "garantias" ALTER COLUMN "status_temp" SET DEFAULT 1;
-UPDATE "garantias" SET "status_temp" = 1 WHERE "status_temp" IS NULL;
-ALTER TABLE "garantias" ALTER COLUMN "status_temp" SET NOT NULL;
+ALTER TABLE "gar_garantias" ALTER COLUMN "status_temp" SET DEFAULT 1;
+UPDATE "gar_garantias" SET "status_temp" = 1 WHERE "status_temp" IS NULL;
+ALTER TABLE "gar_garantias" ALTER COLUMN "status_temp" SET NOT NULL;
 
-ALTER TABLE "garantias" DROP COLUMN "status";
-ALTER TABLE "garantias" RENAME COLUMN "status_temp" TO "status";
+ALTER TABLE "gar_garantias" DROP COLUMN "status";
+ALTER TABLE "gar_garantias" RENAME COLUMN "status_temp" TO "status";
+

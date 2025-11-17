@@ -45,7 +45,7 @@ model Garantia {
   abatimentos     GarantiaAbatimento[]
   emailsCaixa     EmailCaixaEntrada[]
 
-  @@map("garantias")
+  @@map("gar_garantias")
 }
 
 model HistoricoGarantia {
@@ -60,7 +60,7 @@ model HistoricoGarantia {
 
   garantia Garantia @relation(fields: [garantiaId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
-  @@map("historico_garantias")
+  @@map("gar_historico_garantias")
 }
 
 model AnexoGarantia {
@@ -72,7 +72,7 @@ model AnexoGarantia {
 
   garantia Garantia @relation(fields: [garantiaId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
-  @@map("anexos_garantias")
+  @@map("gar_anexos_garantias")
 }
 
 model GarantiaAbatimento {
@@ -86,7 +86,7 @@ model GarantiaAbatimento {
 
   garantia Garantia @relation(fields: [garantiaId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
-  @@map("garantias_abatimentos")
+  @@map("gar_garantias_abatimentos")
 }
 
 model FornecedorConfig {
@@ -97,7 +97,7 @@ model FornecedorConfig {
   formularioPath  String? @map("formulario_path")
   nomeFormulario  String? @map("nome_formulario") @db.VarChar(255)
 
-  @@map("fornecedores_config")
+  @@map("gar_fornecedores_config")
 }
 
 model EmailCaixaEntrada {
@@ -117,8 +117,8 @@ model EmailCaixaEntrada {
 
   garantia Garantia? @relation(fields: [garantiaId], references: [id], onDelete: SetNull, onUpdate: NoAction)
 
-  @@index([garantiaId], map: "idx_caixa_entrada_garantia_id")
-  @@map("caixa_de_entrada_emails")
+  @@index([garantiaId], map: "gar_idx_caixa_entrada_garantia_id")
+  @@map("gar_caixa_de_entrada_emails")
 }
 
 model EmailAttachment {
@@ -130,7 +130,7 @@ model EmailAttachment {
   contentId     String? @map("content_id")
   contentBase64 String? @map("content_base64")
 
-  @@map("email_attachments")
+  @@map("gar_email_attachments")
   @@ignore
 }
 
@@ -150,8 +150,8 @@ model EmailRegistro {
   garantiaId      BigInt?   @map("garantia_id")
   createdAt       DateTime? @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  @@index([garantiaId], map: "idx_emails_garantia_id")
-  @@index([notaInterna], map: "idx_emails_nota_interna")
-  @@map("emails")
+  @@index([garantiaId], map: "gar_idx_emails_garantia_id")
+  @@index([notaInterna], map: "gar_idx_emails_nota_interna")
+  @@map("gar_emails")
   @@ignore
 }
