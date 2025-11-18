@@ -96,7 +96,7 @@ model FornecedorConfig {
   portalLink      String? @map("portal_link")
   formularioPath  String? @map("formulario_path")
   nomeFormulario  String? @map("nome_formulario") @db.VarChar(255)
-  instrucao       String? @map("instrucoes")
+  instrucoes      String? @map("instrucoes")
 
   @@map("gar_fornecedores_config")
 }

@@ -91,7 +91,7 @@ export class ErpController {
             formulario_path: fornecedorConfig.formularioPath,
             nome_formulario: fornecedorConfig.nomeFormulario,
             formulario_url: formularioDownloadUrl,
-            instrucao: fornecedorConfig.instrucao,
+            instrucoes: fornecedorConfig.instrucoes,
           }
         : null,
     };
