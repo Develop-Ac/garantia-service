@@ -35,6 +35,7 @@ export class FornecedoresService {
       formulario_path: config.formularioPath,
       nome_formulario: config.nomeFormulario,
       formulario_url: formularioUrl,
+      instrucao: config.instrucao,
     };
   }
 
