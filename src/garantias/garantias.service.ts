@@ -258,10 +258,11 @@ export class GarantiasService {
     }
 
     return this.prisma.$transaction(async (tx) => {
+      const shouldSendEmail = dto.enviarEmail === true;
       let messageId: string | null = null;
       let assunto: string | null = null;
 
-      if (dto.enviarEmail) {
+      if (shouldSendEmail) {
         const destinatario = (dto.destinatario ?? garantia.emailFornecedor ?? '').trim();
         if (!destinatario) {
           throw new BadRequestException('Destinatario nao informado.');
@@ -322,8 +323,8 @@ export class GarantiasService {
         data: {
           garantiaId: id,
           descricao: dto.descricao,
-          tipoInteracao: dto.enviarEmail ? 'Resposta Enviada' : dto.tipoInteracao ?? 'Nota Interna',
-          foiVisto: !!dto.enviarEmail,
+          tipoInteracao: shouldSendEmail ? 'Resposta Enviada' : dto.tipoInteracao ?? 'Nota Interna',
+          foiVisto: shouldSendEmail,
           messageId,
           assunto,
         },
