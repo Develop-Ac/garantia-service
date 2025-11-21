@@ -32,6 +32,25 @@ interface TimelineHistorico {
   data_ocorrencia: Date;
 }
 
+const STATUS_LABELS: Record<number, string> = {
+  1: 'Aguardando Aprovacao do Fornecedor',
+  2: 'Emissao de Nota Fiscal',
+  3: 'Descarte da Mercadoria',
+  4: 'Aguardando Coleta',
+  5: 'Aguardando Frete Cortesia',
+  6: 'Aguardando Analise de Garantia',
+  7: 'Aguardando Credito',
+  8: 'Produto em Proxima Compra',
+  9: 'Troca de Produto',
+  10: 'Abatimento em Proximo Pedido',
+  11: 'Credito em Conta',
+  12: 'Abatimento em Boleto',
+  13: 'Garantia Recebida',
+  14: 'Concluida',
+  15: 'Garantia Reprovada',
+  16: 'Garantia Reprovada na Analise',
+};
+
 @Injectable()
 export class GarantiasService {
   private readonly THREAD_LIMIT = 10;
@@ -195,6 +214,11 @@ export class GarantiasService {
   }
 
   async atualizarStatus(id: number, dto: AtualizarStatusGarantiaDto) {
+    const garantiaAntes = await this.prisma.garantia.findUnique({ where: { id } });
+    if (!garantiaAntes) {
+      throw new NotFoundException('Garantia nao encontrada.');
+    }
+
     const data: Prisma.GarantiaUpdateInput = {};
 
     if (dto.novoStatus !== undefined) data.status = dto.novoStatus;
@@ -247,6 +271,7 @@ export class GarantiasService {
       if (!garantiaAtualizada) {
         throw new NotFoundException('Garantia nao encontrada.');
       }
+      await this.registrarHistoricoStatus(tx, garantiaAntes, garantiaAtualizada, dto);
       return this.serializeGarantia(garantiaAtualizada);
     });
   }
@@ -644,5 +669,95 @@ export class GarantiasService {
     } catch (error) {
       return date.toISOString();
     }
+  }
+
+  private statusLabel(code?: number | null) {
+    if (code == null) return 'Status desconhecido';
+    return STATUS_LABELS[code] ?? `Status ${code}`;
+  }
+
+  private formatMoney(value?: number | Prisma.Decimal | null) {
+    if (value == null) return null;
+    const numeric = Number(value);
+    if (Number.isNaN(numeric)) return null;
+    return numeric.toFixed(2);
+  }
+
+  private formatDate(value?: string | Date | null) {
+    if (!value) return null;
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+    return date.toISOString().split('T')[0];
+  }
+
+  private async registrarHistoricoStatus(
+    tx: Prisma.TransactionClient,
+    garantiaAntes: Garantia,
+    garantiaDepois: Garantia,
+    dto: AtualizarStatusGarantiaDto,
+  ) {
+    const detalhes: string[] = [];
+    const statusAntes = this.statusLabel(garantiaAntes.status);
+    const statusDepois = this.statusLabel(garantiaDepois.status);
+    if (garantiaDepois.status !== garantiaAntes.status) {
+      detalhes.push(`Status alterado de "${statusAntes}" para "${statusDepois}".`);
+    } else {
+      detalhes.push(`Status permanece em "${statusDepois}".`);
+    }
+
+    if (dto.precisaNotaFiscal !== undefined) {
+      detalhes.push(`Precisa NF: ${dto.precisaNotaFiscal ? 'Sim' : 'Nao'}.`);
+    }
+    if (dto.numeroNfDevolucao) detalhes.push(`NF de devolucao: ${dto.numeroNfDevolucao}.`);
+    if (dto.cfop) detalhes.push(`CFOP: ${dto.cfop}.`);
+    if (dto.fretePorContaDe) detalhes.push(`Frete por conta de: ${dto.fretePorContaDe}.`);
+    if (dto.transportadoraRazaoSocial) detalhes.push(`Transportadora: ${dto.transportadoraRazaoSocial}.`);
+    if (dto.transportadoraCnpj) detalhes.push(`CNPJ: ${dto.transportadoraCnpj}.`);
+    if (dto.transportadoraEndereco) detalhes.push(`Endereco: ${dto.transportadoraEndereco}.`);
+    if (dto.transportadoraCidade) detalhes.push(`Cidade: ${dto.transportadoraCidade}.`);
+    if (dto.transportadoraUf) detalhes.push(`UF: ${dto.transportadoraUf}.`);
+    if (dto.transportadoraIe) detalhes.push(`IE: ${dto.transportadoraIe}.`);
+    if (dto.codigoColetaEnvio) detalhes.push(`Codigo/Coleta: ${dto.codigoColetaEnvio}.`);
+    if (dto.obs) detalhes.push(`Observacao: ${dto.obs}.`);
+
+    const dataColeta = dto.dataColetaEnvio ?? garantiaDepois.dataColetaEnvio;
+    const dataColetaFmt = this.formatDate(dataColeta);
+    if (dataColetaFmt) detalhes.push(`Data de envio/coleta: ${dataColetaFmt}.`);
+
+    if (dto.valorCreditoTotal !== undefined) {
+      const valorFmt = this.formatMoney(dto.valorCreditoTotal);
+      if (valorFmt) detalhes.push(`Valor de credito total informado: R$ ${valorFmt}.`);
+    }
+
+    if (dto.valorCreditoUtilizado !== undefined) {
+      const incrementoFmt = this.formatMoney(dto.valorCreditoUtilizado);
+      const acumuladoFmt = this.formatMoney(garantiaDepois.valorCreditoUtilizado);
+      if (incrementoFmt) detalhes.push(`Credito utilizado nesta etapa: R$ ${incrementoFmt}.`);
+      if (acumuladoFmt) detalhes.push(`Credito utilizado acumulado: R$ ${acumuladoFmt}.`);
+    }
+
+    if (dto.abatimentos?.length) {
+      detalhes.push('Abatimentos registrados:');
+      dto.abatimentos.forEach((item, index) => {
+        const vencimento = this.formatDate(item.vencimento);
+        const valorFmt = this.formatMoney(item.valor);
+        detalhes.push(
+          `  ${index + 1}. NF ${item.nf ?? '-'} | Parcela ${item.parcela ?? '-'} | Vencimento ${
+            vencimento ?? '-'
+          } | Valor R$ ${valorFmt ?? '-'}`,
+        );
+      });
+    }
+
+    const descricao = detalhes.join('<br>');
+
+    await tx.historicoGarantia.create({
+      data: {
+        garantiaId: garantiaDepois.id,
+        descricao,
+        tipoInteracao: 'Atualizacao de Status',
+        foiVisto: true,
+      },
+    });
   }
 }
