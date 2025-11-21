@@ -18,8 +18,9 @@ export class CriarGarantiaDto {
   @IsNotEmpty()
   nomeFornecedor: string;
 
+  @IsOptional()
   @IsEmail()
-  emailFornecedor: string;
+  emailFornecedor?: string;
 
   @IsString()
   @IsNotEmpty()
