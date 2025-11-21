@@ -683,7 +683,7 @@ export class GarantiasService {
     return numeric.toFixed(2);
   }
 
-  private formatDate(value?: string | Date | null) {
+  private formatDateIso(value?: string | Date | null) {
     if (!value) return null;
     const date = value instanceof Date ? value : new Date(value);
     if (Number.isNaN(date.getTime())) return null;
@@ -721,7 +721,7 @@ export class GarantiasService {
     if (dto.obs) detalhes.push(`Observacao: ${dto.obs}.`);
 
     const dataColeta = dto.dataColetaEnvio ?? garantiaDepois.dataColetaEnvio;
-    const dataColetaFmt = this.formatDate(dataColeta);
+    const dataColetaFmt = this.formatDateIso(dataColeta);
     if (dataColetaFmt) detalhes.push(`Data de envio/coleta: ${dataColetaFmt}.`);
 
     if (dto.valorCreditoTotal !== undefined) {
@@ -739,7 +739,7 @@ export class GarantiasService {
     if (dto.abatimentos?.length) {
       detalhes.push('Abatimentos registrados:');
       dto.abatimentos.forEach((item, index) => {
-        const vencimento = this.formatDate(item.vencimento);
+        const vencimento = this.formatDateIso(item.vencimento);
         const valorFmt = this.formatMoney(item.valor);
         detalhes.push(
           `  ${index + 1}. NF ${item.nf ?? '-'} | Parcela ${item.parcela ?? '-'} | Vencimento ${
