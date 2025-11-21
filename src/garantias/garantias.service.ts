@@ -159,7 +159,9 @@ export class GarantiasService {
       let messageId: string | null = null;
       let assunto: string | null = null;
 
-      if (!dto.outrosMeios) {
+      const podeEnviarEmail = Boolean(dto.emailFornecedor?.trim());
+
+      if (!dto.outrosMeios && podeEnviarEmail) {
         const subject = `Abertura de Processo de ${dto.tipoGarantia} - Nota Fiscal ${dto.nfsCompra ?? 'N/A'}`;
         const listaProdutos = dto.produtos
           .split(';')
