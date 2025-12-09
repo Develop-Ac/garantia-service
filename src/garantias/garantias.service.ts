@@ -60,7 +60,7 @@ export class GarantiasService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
-  ) {}
+  ) { }
 
   async listarTodas() {
     const garantias = await this.prisma.garantia.findMany({
@@ -236,6 +236,7 @@ export class GarantiasService {
     if (dto.codigoColetaEnvio) data.codigoColetaEnvio = dto.codigoColetaEnvio;
     if (dto.obs) data.obs = dto.obs;
     if (dto.numeroNfDevolucao) data.numeroNfDevolucao = dto.numeroNfDevolucao;
+    if (dto.nfAbatidaBoleto) data.nfAbatidaBoleto = dto.nfAbatidaBoleto;
     if (dto.dataColetaEnvio) data.dataColetaEnvio = new Date(dto.dataColetaEnvio);
     if (dto.valorCreditoTotal !== undefined) data.valorCreditoTotal = dto.valorCreditoTotal;
 
@@ -744,8 +745,7 @@ export class GarantiasService {
         const vencimento = this.formatDateIso(item.vencimento);
         const valorFmt = this.formatMoney(item.valor);
         detalhes.push(
-          `  ${index + 1}. NF ${item.nf ?? '-'} | Parcela ${item.parcela ?? '-'} | Vencimento ${
-            vencimento ?? '-'
+          `  ${index + 1}. NF ${item.nf ?? '-'} | Parcela ${item.parcela ?? '-'} | Vencimento ${vencimento ?? '-'
           } | Valor R$ ${valorFmt ?? '-'}`,
         );
       });

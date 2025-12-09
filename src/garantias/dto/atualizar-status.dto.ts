@@ -113,6 +113,11 @@ export class AtualizarStatusGarantiaDto {
   @Transform(toNumber)
   valorCreditoUtilizado?: number;
 
+  @Expose({ name: 'nf_abatida_boleto' })
+  @IsOptional()
+  @IsString()
+  nfAbatidaBoleto?: string;
+
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
