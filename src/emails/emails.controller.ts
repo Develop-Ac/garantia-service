@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Put } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Put } from '@nestjs/common';
 import { EmailsService } from './emails.service';
 import { LinkEmailDto } from './dto/link-email.dto';
 
@@ -17,5 +17,10 @@ export class EmailsController {
     @Body() dto: LinkEmailDto,
   ) {
     return this.emailsService.vincular(emailId, dto.garantiaId);
+  }
+
+  @Delete(':emailId')
+  excluirSemVinculo(@Param('emailId', ParseIntPipe) emailId: number) {
+    return this.emailsService.excluirSemVinculo(emailId);
   }
 }

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -55,5 +55,23 @@ export class EmailsService {
 
       return { message: 'E-mail vinculado com sucesso!' };
     });
+  }
+
+  async excluirSemVinculo(emailId: number) {
+    const email = await this.prisma.emailCaixaEntrada.findUnique({
+      where: { id: emailId },
+      select: { id: true, garantiaId: true },
+    });
+
+    if (!email) {
+      throw new NotFoundException('E-mail nao encontrado.');
+    }
+
+    if (email.garantiaId) {
+      throw new ConflictException('Nao e permitido excluir e-mail vinculado a garantia.');
+    }
+
+    await this.prisma.emailCaixaEntrada.delete({ where: { id: emailId } });
+    return { message: 'E-mail excluido com sucesso.' };
   }
 }

@@ -78,6 +78,25 @@ export class FornecedoresService {
     };
   }
 
+  async buscarFornecedorErp(erpId: string) {
+    const parsedId = Number(erpId);
+    if (!Number.isInteger(parsedId) || parsedId <= 0) {
+      throw new BadRequestException('Codigo do fornecedor invalido.');
+    }
+
+    const nomesFornecedores = await this.buscarNomesFornecedores([parsedId]);
+    const nome = nomesFornecedores.get(parsedId) ?? null;
+
+    if (!nome) {
+      throw new NotFoundException('Fornecedor nao encontrado no ERP.');
+    }
+
+    return {
+      erp_fornecedor_id: parsedId,
+      nome_fornecedor: nome,
+    };
+  }
+
   async criarConfiguracao(dto: UpsertFornecedorConfigDto, formulario?: Express.Multer.File) {
     const processoTipo = this.normalizarProcessoTipo(dto.processo_tipo);
     this.validarPayload(dto, processoTipo, formulario);

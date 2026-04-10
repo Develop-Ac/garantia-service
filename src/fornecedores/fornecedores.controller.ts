@@ -19,6 +19,11 @@ import { CopyFornecedorConfigDto } from './dto/copy-fornecedor-config.dto';
 export class FornecedoresController {
   constructor(private readonly fornecedoresService: FornecedoresService) {}
 
+  @Get('erp/:erpId')
+  buscarFornecedorErp(@Param('erpId') erpId: string) {
+    return this.fornecedoresService.buscarFornecedorErp(erpId);
+  }
+
   @Get('config')
   listarConfiguracoes() {
     return this.fornecedoresService.listarConfiguracoes();
