@@ -32,6 +32,15 @@ interface TimelineHistorico {
   data_ocorrencia: Date;
 }
 
+interface EmailAttachmentRow {
+  id: bigint | number;
+  emailId: number;
+  garantiaId: number;
+  nomeFicheiro: string;
+  pathFicheiro: string;
+  dataUpload: Date | null;
+}
+
 const STATUS_LABELS: Record<number, string> = {
   1: 'Aguardando Aprovacao do Fornecedor',
   2: 'Emissao de Nota Fiscal',
@@ -71,10 +80,17 @@ export class GarantiasService {
       },
     });
 
+    const anexosEmailByGarantia = await this.getAnexosEmailByGarantiaIds(
+      garantias.map((garantia) => garantia.id),
+    );
+
     return garantias.map((garantia) => ({
       ...this.serializeGarantia(garantia),
       historico: garantia.historicos.map((h) => this.serializeHistorico(h)),
-      anexos: garantia.anexos.map((a) => this.serializeAnexo(a)),
+      anexos: [
+        ...garantia.anexos.map((a) => this.serializeAnexo(a)),
+        ...(anexosEmailByGarantia.get(garantia.id) ?? []).map((a) => this.serializeAnexoEmail(a)),
+      ],
     }));
   }
 
@@ -95,9 +111,14 @@ export class GarantiasService {
       this.mapHistoricoToTimeline(historico, garantia),
     );
 
+    const anexosEmailByGarantia = await this.getAnexosEmailByGarantiaIds([garantia.id]);
+
     return {
       ...this.serializeGarantia(garantia),
-      anexos: garantia.anexos.map((a) => this.serializeAnexo(a)),
+      anexos: [
+        ...garantia.anexos.map((a) => this.serializeAnexo(a)),
+        ...(anexosEmailByGarantia.get(garantia.id) ?? []).map((a) => this.serializeAnexoEmail(a)),
+      ],
       timeline,
     };
   }
@@ -511,6 +532,45 @@ export class GarantiasService {
       path_ficheiro: anexo.pathFicheiro,
       data_upload: anexo.dataUpload,
     };
+  }
+
+  private serializeAnexoEmail(anexo: EmailAttachmentRow) {
+    return {
+      id: Number(anexo.id),
+      garantia_id: anexo.garantiaId,
+      nome_ficheiro: anexo.nomeFicheiro,
+      path_ficheiro: anexo.pathFicheiro,
+      data_upload: anexo.dataUpload,
+      email_id: anexo.emailId,
+    };
+  }
+
+  private async getAnexosEmailByGarantiaIds(garantiaIds: number[]) {
+    if (!garantiaIds.length) {
+      return new Map<number, EmailAttachmentRow[]>();
+    }
+
+    const rows = await this.prisma.$queryRaw<EmailAttachmentRow[]>(Prisma.sql`
+      SELECT
+        "id",
+        "email_id" AS "emailId",
+        "garantia_id" AS "garantiaId",
+        "nome_ficheiro" AS "nomeFicheiro",
+        "path_ficheiro" AS "pathFicheiro",
+        "data_upload" AS "dataUpload"
+      FROM "gar_anexos_email"
+      WHERE "garantia_id" IN (${Prisma.join(garantiaIds)})
+      ORDER BY "data_upload" ASC, "id" ASC
+    `);
+
+    const byGarantiaId = new Map<number, EmailAttachmentRow[]>();
+    for (const row of rows) {
+      const current = byGarantiaId.get(row.garantiaId) ?? [];
+      current.push(row);
+      byGarantiaId.set(row.garantiaId, current);
+    }
+
+    return byGarantiaId;
   }
 
   private getFileStoragePath(file: Express.Multer.File) {

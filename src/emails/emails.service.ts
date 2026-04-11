@@ -6,6 +6,50 @@ import { PrismaService } from '../prisma/prisma.service';
 export class EmailsService {
   constructor(private readonly prisma: PrismaService) {}
 
+  private mapAnexoEmailToPayload(anexo: {
+    nomeFicheiro: string;
+    pathFicheiro: string;
+  }) {
+    return {
+      filename: anexo.nomeFicheiro,
+      object_key: anexo.pathFicheiro,
+      path_ficheiro: anexo.pathFicheiro,
+      path: anexo.pathFicheiro,
+      url: undefined,
+    };
+  }
+
+  private async getAnexosPorEmailIds(emailIds: number[]) {
+    if (!emailIds.length) {
+      return new Map<number, Array<{ nomeFicheiro: string; pathFicheiro: string }>>();
+    }
+
+    const rows = await this.prisma.$queryRaw<
+      Array<{
+        emailId: number;
+        nomeFicheiro: string;
+        pathFicheiro: string;
+      }>
+    >(Prisma.sql`
+      SELECT
+        "email_id" AS "emailId",
+        "nome_ficheiro" AS "nomeFicheiro",
+        "path_ficheiro" AS "pathFicheiro"
+      FROM "gar_anexos_email"
+      WHERE "email_id" IN (${Prisma.join(emailIds)})
+      ORDER BY "id" ASC
+    `);
+
+    const byEmailId = new Map<number, Array<{ nomeFicheiro: string; pathFicheiro: string }>>();
+    for (const row of rows) {
+      const current = byEmailId.get(row.emailId) ?? [];
+      current.push({ nomeFicheiro: row.nomeFicheiro, pathFicheiro: row.pathFicheiro });
+      byEmailId.set(row.emailId, current);
+    }
+
+    return byEmailId;
+  }
+
   async listarCaixa() {
     const emails = await this.prisma.emailCaixaEntrada.findMany({
       orderBy: { dataRecebimento: 'desc' },
@@ -13,6 +57,8 @@ export class EmailsService {
         garantia: { select: { notaInterna: true } },
       },
     });
+
+    const anexosByEmailId = await this.getAnexosPorEmailIds(emails.map((email) => email.id));
 
     return emails.map((email) => ({
       id: email.id,
@@ -23,7 +69,7 @@ export class EmailsService {
       garantia_id: email.garantiaId,
       nota_interna: email.garantia?.notaInterna ?? null,
       message_id: email.messageId,
-      attachments: this.normalizeAttachments(email.attachments),
+      attachments: (anexosByEmailId.get(email.id) ?? []).map((anexo) => this.mapAnexoEmailToPayload(anexo)),
       to_list: email.toList ?? [],
       cc_list: email.ccList ?? [],
       bcc_list: email.bccList ?? [],
@@ -42,7 +88,11 @@ export class EmailsService {
         data: { garantiaId },
       });
 
-      await this.vincularAnexosEmailNaGarantia(tx, email.attachments, garantiaId);
+      await tx.$executeRaw`
+        UPDATE "gar_anexos_email"
+        SET "garantia_id" = ${garantiaId}
+        WHERE "email_id" = ${emailId}
+      `;
 
       await tx.historicoGarantia.create({
         data: {
@@ -62,149 +112,6 @@ export class EmailsService {
 
       return { message: 'E-mail vinculado com sucesso!' };
     });
-  }
-
-  private normalizeAttachments(raw: Prisma.JsonValue | null | undefined) {
-    if (!raw) return [];
-
-    const source = typeof raw === 'string' ? this.tryParseJson(raw) : raw;
-    if (!Array.isArray(source)) return [];
-
-    return source
-      .map((item) => {
-        if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
-        const cast = item as Record<string, unknown>;
-
-        const filename = this.toNonEmptyString(
-          cast.filename,
-          cast.nome_ficheiro,
-          cast.nome,
-          cast.name,
-        );
-
-        const objectKey = this.toNonEmptyString(
-          cast.object_key,
-          cast.objectKey,
-          cast.storage_key,
-          cast.storageKey,
-          cast.file_key,
-          cast.fileKey,
-          cast.minio_key,
-          cast.minioKey,
-          cast.s3_key,
-          cast.s3Key,
-          cast.key,
-          cast.path_ficheiro,
-          cast.file_path,
-          cast.filePath,
-          cast.path,
-          cast.caminho,
-          cast.location,
-          cast.uri,
-        );
-
-        const url = this.toNonEmptyString(cast.url, cast.link);
-        const mimeType = this.toNonEmptyString(cast.mime_type, cast.mimeType, cast.type);
-        const sizeBytes = this.toNumber(cast.size_bytes, cast.sizeBytes, cast.size);
-        const contentId = this.toNonEmptyString(cast.content_id, cast.contentId, cast['content-id']);
-        const contentBase64 = this.toNonEmptyString(
-          cast.content_base64,
-          cast.contentBase64,
-          cast.base64,
-          cast.content,
-        );
-
-        return {
-          filename: filename ?? 'Anexo',
-          object_key: objectKey,
-          path_ficheiro: objectKey,
-          url,
-          mime_type: mimeType,
-          size_bytes: sizeBytes,
-          content_id: contentId,
-          content_base64: contentBase64,
-        };
-      })
-      .filter((item): item is NonNullable<typeof item> => item !== null);
-  }
-
-  private async vincularAnexosEmailNaGarantia(
-    tx: Prisma.TransactionClient,
-    rawAttachments: Prisma.JsonValue | null | undefined,
-    garantiaId: number,
-  ) {
-    const parsed = this.normalizeAttachments(rawAttachments);
-    if (!parsed.length) return;
-
-    const entries = parsed
-      .map((attachment) => ({
-        nome: this.toNonEmptyString(attachment.filename) ?? 'Anexo',
-        path: this.toNonEmptyString(attachment.object_key, attachment.path_ficheiro, attachment.url),
-      }))
-      .filter((item): item is { nome: string; path: string } => Boolean(item.path));
-
-    if (!entries.length) return;
-
-    const uniqueByPath = new Map<string, { nome: string; path: string }>();
-    for (const entry of entries) {
-      if (!uniqueByPath.has(entry.path)) {
-        uniqueByPath.set(entry.path, entry);
-      }
-    }
-
-    const uniqueEntries = Array.from(uniqueByPath.values());
-    const existing = await tx.anexoGarantia.findMany({
-      where: {
-        garantiaId,
-        pathFicheiro: { in: uniqueEntries.map((entry) => entry.path) },
-      },
-      select: { pathFicheiro: true },
-    });
-
-    const existingPaths = new Set(existing.map((item) => item.pathFicheiro));
-    const toCreate = uniqueEntries
-      .filter((entry) => !existingPaths.has(entry.path))
-      .map((entry) => ({
-        garantiaId,
-        nomeFicheiro: entry.nome,
-        pathFicheiro: entry.path,
-      }));
-
-    if (!toCreate.length) return;
-
-    await tx.anexoGarantia.createMany({ data: toCreate });
-  }
-
-  private tryParseJson(value: string) {
-    try {
-      return JSON.parse(value) as Prisma.JsonValue;
-    } catch {
-      return null;
-    }
-  }
-
-  private toNonEmptyString(...values: unknown[]) {
-    for (const value of values) {
-      if (typeof value === 'string' && value.trim()) {
-        return value.trim();
-      }
-    }
-    return undefined;
-  }
-
-  private toNumber(...values: unknown[]) {
-    for (const value of values) {
-      if (typeof value === 'number' && Number.isFinite(value)) {
-        return value;
-      }
-      if (typeof value === 'string' && value.trim()) {
-        const parsed = Number(value);
-        if (Number.isFinite(parsed)) {
-          return parsed;
-        }
-      }
-    }
-    return undefined;
   }
 
   async excluirSemVinculo(emailId: number) {
