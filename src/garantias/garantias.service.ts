@@ -134,7 +134,15 @@ export class GarantiasService {
     }
 
     const { s3, bucket, prefix } = await this.getMinioClient();
-    const finalKey = normalizeStorageKey(trimmed, bucket, prefix);
+    let finalKey = normalizeStorageKey(trimmed, bucket, prefix);
+
+    // Anexos de e-mail podem chegar com bucket embutido no path; nesse caso o
+    // caminho assinado vira /bucket/bucket/... e o Minio retorna NoSuchKey.
+    const emailFolderPrefix = `${bucket}/anexos_email_garantia/`;
+    if (finalKey.toLowerCase().startsWith(emailFolderPrefix.toLowerCase())) {
+      finalKey = finalKey.slice(bucket.length + 1);
+    }
+
     try {
       const command = new GetObjectCommand({
         Bucket: bucket,

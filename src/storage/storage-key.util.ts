@@ -9,8 +9,8 @@ export const normalizeStorageKey = (rawKey: string, bucket: string, prefix: stri
   key = key.replace(/^\/+/, '');
 
   const bucketPrefix = `${bucket}/`.replace(/\/+$/, '/');
-  if (key.startsWith(bucketPrefix)) {
-    key = key.slice(bucketPrefix.length);
+  while (key.toLowerCase().startsWith(bucketPrefix.toLowerCase())) {
+    key = key.slice(bucketPrefix.length).replace(/^\/+/, '');
   }
 
   const normalizedPrefix = prefix ? (prefix.endsWith('/') ? prefix : `${prefix}/`) : '';
