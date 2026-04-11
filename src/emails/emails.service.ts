@@ -85,9 +85,22 @@ export class EmailsService {
         const objectKey = this.toNonEmptyString(
           cast.object_key,
           cast.objectKey,
+          cast.storage_key,
+          cast.storageKey,
+          cast.file_key,
+          cast.fileKey,
+          cast.minio_key,
+          cast.minioKey,
+          cast.s3_key,
+          cast.s3Key,
+          cast.key,
           cast.path_ficheiro,
+          cast.file_path,
+          cast.filePath,
           cast.path,
           cast.caminho,
+          cast.location,
+          cast.uri,
         );
 
         const url = this.toNonEmptyString(cast.url, cast.link);
