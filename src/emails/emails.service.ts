@@ -107,6 +107,12 @@ export class EmailsService {
         const mimeType = this.toNonEmptyString(cast.mime_type, cast.mimeType, cast.type);
         const sizeBytes = this.toNumber(cast.size_bytes, cast.sizeBytes, cast.size);
         const contentId = this.toNonEmptyString(cast.content_id, cast.contentId, cast['content-id']);
+        const contentBase64 = this.toNonEmptyString(
+          cast.content_base64,
+          cast.contentBase64,
+          cast.base64,
+          cast.content,
+        );
 
         return {
           filename: filename ?? 'Anexo',
@@ -116,6 +122,7 @@ export class EmailsService {
           mime_type: mimeType,
           size_bytes: sizeBytes,
           content_id: contentId,
+          content_base64: contentBase64,
         };
       })
       .filter((item): item is NonNullable<typeof item> => item !== null);
