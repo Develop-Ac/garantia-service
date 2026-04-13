@@ -316,16 +316,28 @@ export class GarantiasService {
 
     return this.prisma.$transaction(async (tx) => {
       const shouldSendEmail = dto.enviarEmail === true;
+      const hasDadosEdicao = this.hasCamposDeEdicao(dto);
+      let garantiaAtual = garantia;
       let messageId: string | null = null;
       let assunto: string | null = null;
 
+      if (hasDadosEdicao) {
+        const dadosUpdate = this.buildDadosEdicaoUpdate(dto);
+        if (Object.keys(dadosUpdate).length > 0) {
+          garantiaAtual = await tx.garantia.update({
+            where: { id },
+            data: dadosUpdate,
+          });
+        }
+      }
+
       if (shouldSendEmail) {
-        const destinatario = (dto.destinatario ?? garantia.emailFornecedor ?? '').trim();
+        const destinatario = (dto.destinatario ?? garantiaAtual.emailFornecedor ?? '').trim();
         if (!destinatario) {
           throw new BadRequestException('Destinatario nao informado.');
         }
 
-        const ccFinal = dto.copias?.trim() || dto.cc?.trim() || garantia.copiasEmail || undefined;
+        const ccFinal = dto.copias?.trim() || dto.cc?.trim() || garantiaAtual.copiasEmail || undefined;
 
         const referencias = await tx.historicoGarantia.findMany({
           where: { garantiaId: id, messageId: { not: null } },
@@ -343,13 +355,13 @@ export class GarantiasService {
 
         const lastSubject = [...referencias]
           .reverse()
-          .find((ref) => !!ref.assunto)?.assunto ?? `Garantia - NI ${garantia.notaInterna}`;
+          .find((ref) => !!ref.assunto)?.assunto ?? `Garantia - NI ${garantiaAtual.notaInterna}`;
         const computedSubject = /^re:/i.test(lastSubject) ? lastSubject : `Re: ${lastSubject}`;
         assunto = computedSubject;
         const parentId = thread.length ? thread[thread.length - 1].id : undefined;
 
         const quoted = await this.buildQuotedThread(id, {
-          ourAddress: process.env.EMAIL_FROM ?? garantia.emailFornecedor ?? '',
+          ourAddress: process.env.EMAIL_FROM ?? garantiaAtual.emailFornecedor ?? '',
           toDefault: destinatario,
           ccDefault: ccFinal ?? '',
         });
@@ -376,11 +388,20 @@ export class GarantiasService {
         messageId = email.messageId ?? null;
       }
 
-      const historico = await tx.historicoGarantia.create({
+      let descricaoHistorico = dto.descricao ?? '';
+      let tipoInteracao = shouldSendEmail ? 'Resposta Enviada' : dto.tipoInteracao ?? 'Nota Interna';
+
+      if (hasDadosEdicao && !shouldSendEmail) {
+        const detalhesEdicao = this.buildDetalhesEdicao(garantia, garantiaAtual);
+        descricaoHistorico = this.composeDescricaoEdicao(detalhesEdicao, dto.descricao);
+        tipoInteracao = 'Edicao de Dados';
+      }
+
+      await tx.historicoGarantia.create({
         data: {
           garantiaId: id,
-          descricao: dto.descricao,
-          tipoInteracao: shouldSendEmail ? 'Resposta Enviada' : dto.tipoInteracao ?? 'Nota Interna',
+          descricao: descricaoHistorico,
+          tipoInteracao,
           foiVisto: shouldSendEmail,
           messageId,
           assunto,
@@ -759,6 +780,113 @@ export class GarantiasService {
     const date = value instanceof Date ? value : new Date(value);
     if (Number.isNaN(date.getTime())) return null;
     return date.toISOString().split('T')[0];
+  }
+
+  private hasCamposDeEdicao(dto: AtualizarGarantiaDto) {
+    return [
+      dto.erpFornecedorId,
+      dto.nomeFornecedor,
+      dto.emailFornecedor,
+      dto.produtos,
+      dto.notaFiscal,
+      dto.tipoGarantia,
+      dto.nfsCompra,
+      dto.protocoloFornecedor,
+      dto.copiasEmail,
+      dto.outrosMeios,
+    ].some((value) => value !== undefined);
+  }
+
+  private normalizeOptionalText(value?: string) {
+    if (value === undefined) return undefined;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  private buildDadosEdicaoUpdate(dto: AtualizarGarantiaDto): Prisma.GarantiaUpdateInput {
+    const data: Prisma.GarantiaUpdateInput = {};
+
+    if (dto.erpFornecedorId !== undefined) {
+      data.erpFornecedorId = this.normalizeFornecedorId(dto.erpFornecedorId);
+    }
+    if (dto.nomeFornecedor !== undefined) {
+      const nome = this.normalizeOptionalText(dto.nomeFornecedor);
+      if (!nome) {
+        throw new BadRequestException('nomeFornecedor invalido.');
+      }
+      data.nomeFornecedor = nome;
+    }
+    if (dto.emailFornecedor !== undefined) {
+      data.emailFornecedor = this.normalizeOptionalText(dto.emailFornecedor);
+    }
+    if (dto.produtos !== undefined) {
+      const produtos = this.normalizeOptionalText(dto.produtos);
+      if (!produtos) {
+        throw new BadRequestException('produtos invalido.');
+      }
+      data.produtos = produtos;
+    }
+    if (dto.notaFiscal !== undefined) {
+      const nota = this.normalizeOptionalText(dto.notaFiscal);
+      if (!nota) {
+        throw new BadRequestException('notaFiscal invalido.');
+      }
+      data.notaInterna = nota;
+    }
+    if (dto.descricao !== undefined) {
+      data.descricao = this.normalizeOptionalText(dto.descricao);
+    }
+    if (dto.tipoGarantia !== undefined) {
+      data.tipoGarantia = this.normalizeOptionalText(dto.tipoGarantia);
+    }
+    if (dto.nfsCompra !== undefined) {
+      data.nfsCompra = this.normalizeOptionalText(dto.nfsCompra);
+    }
+    if (dto.protocoloFornecedor !== undefined) {
+      data.protocoloFornecedor = this.normalizeOptionalText(dto.protocoloFornecedor);
+    }
+    if (dto.copiasEmail !== undefined) {
+      data.copiasEmail = this.normalizeOptionalText(dto.copiasEmail);
+    }
+
+    return data;
+  }
+
+  private formatDiffValue(value: unknown) {
+    if (value === null || value === undefined || value === '') return '(vazio)';
+    if (typeof value === 'boolean') return value ? 'Sim' : 'Nao';
+    return String(value);
+  }
+
+  private buildDetalhesEdicao(antes: Garantia, depois: Garantia) {
+    const campos = [
+      { label: 'ERP fornecedor', before: antes.erpFornecedorId, after: depois.erpFornecedorId },
+      { label: 'Nome do fornecedor', before: antes.nomeFornecedor, after: depois.nomeFornecedor },
+      { label: 'E-mail do fornecedor', before: antes.emailFornecedor, after: depois.emailFornecedor },
+      { label: 'Copias de e-mail', before: antes.copiasEmail, after: depois.copiasEmail },
+      { label: 'Produtos', before: antes.produtos, after: depois.produtos },
+      { label: 'Nota interna', before: antes.notaInterna, after: depois.notaInterna },
+      { label: 'Descricao', before: antes.descricao, after: depois.descricao },
+      { label: 'Tipo de garantia', before: antes.tipoGarantia, after: depois.tipoGarantia },
+      { label: 'NFs de compra', before: antes.nfsCompra, after: depois.nfsCompra },
+      { label: 'Protocolo fornecedor', before: antes.protocoloFornecedor, after: depois.protocoloFornecedor },
+    ];
+
+    return campos
+      .filter((campo) => String(campo.before ?? '') !== String(campo.after ?? ''))
+      .map(
+        (campo) =>
+          `${campo.label}: ${this.formatDiffValue(campo.before)} -> ${this.formatDiffValue(campo.after)}.`,
+      );
+  }
+
+  private composeDescricaoEdicao(detalhes: string[], observacao?: string) {
+    const linhas = detalhes.length > 0 ? detalhes : ['Nenhum campo foi alterado.'];
+    const obs = (observacao ?? '').trim();
+    if (obs.length > 0) {
+      linhas.push(`Observacao: ${obs}`);
+    }
+    return linhas.join('<br>');
   }
 
   private async registrarHistoricoStatus(
