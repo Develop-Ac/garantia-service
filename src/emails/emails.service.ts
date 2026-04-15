@@ -1,27 +1,59 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { getMinioConnection } from '../storage/minio-config';
+import { normalizeStorageKey } from '../storage/storage-key.util';
 
 @Injectable()
 export class EmailsService {
+  private readonly logger = new Logger(EmailsService.name);
+
   constructor(private readonly prisma: PrismaService) {}
+
+  private async excluirAnexosNoMinio(paths: string[]) {
+    if (!paths.length) return;
+
+    const { s3, bucket, prefix } = await getMinioConnection();
+
+    for (const path of paths) {
+      const trimmed = String(path || '').trim();
+      if (!trimmed) continue;
+
+      const key = normalizeStorageKey(trimmed, bucket, prefix);
+      if (!key) continue;
+
+      try {
+        await s3.send(
+          new DeleteObjectCommand({
+            Bucket: bucket,
+            Key: key,
+          }),
+        );
+      } catch {
+        this.logger.warn(`Falha ao excluir anexo no Minio: ${key}`);
+      }
+    }
+  }
 
   private mapAnexoEmailToPayload(anexo: {
     nomeFicheiro: string;
     pathFicheiro: string;
+    contentId?: string | null;
   }) {
     return {
       filename: anexo.nomeFicheiro,
       object_key: anexo.pathFicheiro,
       path_ficheiro: anexo.pathFicheiro,
       path: anexo.pathFicheiro,
+      contentId: anexo.contentId ?? null,
       url: undefined,
     };
   }
 
   private async getAnexosPorEmailIds(emailIds: number[]) {
     if (!emailIds.length) {
-      return new Map<number, Array<{ nomeFicheiro: string; pathFicheiro: string }>>();
+      return new Map<number, Array<{ nomeFicheiro: string; pathFicheiro: string; contentId: string | null }>>();
     }
 
     const rows = await this.prisma.$queryRaw<
@@ -29,21 +61,23 @@ export class EmailsService {
         emailId: number;
         nomeFicheiro: string;
         pathFicheiro: string;
+        contentId: string | null;
       }>
     >(Prisma.sql`
       SELECT
         "email_id" AS "emailId",
         "nome_ficheiro" AS "nomeFicheiro",
-        "path_ficheiro" AS "pathFicheiro"
+        "path_ficheiro" AS "pathFicheiro",
+        "content_id" AS "contentId"
       FROM "gar_anexos_email"
       WHERE "email_id" IN (${Prisma.join(emailIds)})
       ORDER BY "id" ASC
     `);
 
-    const byEmailId = new Map<number, Array<{ nomeFicheiro: string; pathFicheiro: string }>>();
+    const byEmailId = new Map<number, Array<{ nomeFicheiro: string; pathFicheiro: string; contentId: string | null }>>();
     for (const row of rows) {
       const current = byEmailId.get(row.emailId) ?? [];
-      current.push({ nomeFicheiro: row.nomeFicheiro, pathFicheiro: row.pathFicheiro });
+      current.push({ nomeFicheiro: row.nomeFicheiro, pathFicheiro: row.pathFicheiro, contentId: row.contentId });
       byEmailId.set(row.emailId, current);
     }
 
@@ -127,6 +161,27 @@ export class EmailsService {
     if (email.garantiaId) {
       throw new ConflictException('Nao e permitido excluir e-mail vinculado a garantia.');
     }
+
+    const anexos = await this.prisma.$queryRaw<Array<{ pathFicheiro: string | null }>>(Prisma.sql`
+      SELECT "path_ficheiro" AS "pathFicheiro"
+      FROM "gar_anexos_email"
+      WHERE "email_id" = ${emailId}
+    `);
+
+    const paths = anexos
+      .map((item) => item.pathFicheiro)
+      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+
+    try {
+      await this.excluirAnexosNoMinio(paths);
+    } catch {
+      this.logger.warn(`Falha ao inicializar exclusao de anexos no Minio para email ${emailId}`);
+    }
+
+    await this.prisma.$executeRaw`
+      DELETE FROM "gar_anexos_email"
+      WHERE "email_id" = ${emailId}
+    `;
 
     await this.prisma.emailCaixaEntrada.delete({ where: { id: emailId } });
     return { message: 'E-mail excluido com sucesso.' };
