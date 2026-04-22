@@ -1,6 +1,6 @@
 # API de Garantias (NestJS + Prisma)
 
-Backend reescrito em NestJS seguindo o mesmo padrao arquitetural do entregas-ac-backend. Utiliza Prisma para gerir o banco PostgreSQL, Nodemailer para comunicacao via e-mail e Minio (S3-compatível) para anexos.
+Backend reescrito em NestJS seguindo o mesmo padrao arquitetural do entregas-ac-backend. Utiliza Prisma para gerir o banco PostgreSQL e Minio (S3-compatível) para anexos.
 
 ## Preparacao do ambiente
 
@@ -52,11 +52,10 @@ Defina `MINIO_ENDPOINTS` com a lista de IPs/hosts apresentados pelo Easypanel (A
 
 ## Estrutura principal
 
-- `src/garantias`: modulo completo com regras de negocio, upload de anexos e integracao de e-mails.
-- `src/emails`: listagem e vinculacao de e-mails recebidos.
+- `src/garantias`: modulo completo com regras de negocio, upload de anexos e integracao com email-service.
 - `src/fornecedores`: configuracoes especificas por fornecedor ERP.
 - `src/erp`: camada que consulta o ERP via MSSQL OPENQUERY no linked server `CONSULTA`.
-- `prisma/schema.prisma`: definicao das tabelas (garantias, historicos, anexos, abatimentos, fornecedores_config e caixa_de_entrada_emails).
+- `prisma/schema.prisma`: definicao das tabelas de garantia (garantias, historicos, anexos, abatimentos e fornecedores_config).
 
 ## Integracao ERP via OPENQUERY
 
@@ -75,9 +74,15 @@ Preencha as variaveis do bloco `MSSQL_*` no `.env` para apontar ao servidor BI e
 
 - `GET /garantias`, `GET /garantias/:id`
 - `POST /garantias`, `PUT /garantias/:id/status`, `POST /garantias/:id/update`
-- `POST /garantias/email-reply`, `PUT /garantias/:id/marcar-como-visto`
-- `GET /emails`, `PUT /emails/:id/link`
+- `PUT /garantias/:id/marcar-como-visto`
 - `GET /fornecedores/config/:erpId`
+
+## Rotas internas para email-service (prefixo `/api`)
+
+- `GET /internal/garantias/:id`
+- `GET /internal/garantias/by-codigo/:codigo`
+- `POST /internal/garantias/:id/validar-vinculo-email`
+- `POST /internal/garantias/:id/timeline/email-linked`
 - `GET /dados-erp/venda/:ni`
 - `GET /status`
 

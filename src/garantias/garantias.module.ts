@@ -2,9 +2,10 @@ import { Module } from '@nestjs/common';
 import { MulterModule } from '@nestjs/platform-express';
 import multerS3 from 'multer-s3';
 import { GarantiasController } from './garantias.controller';
+import { GarantiasInternalController } from './garantias.internal.controller';
 import { GarantiasService } from './garantias.service';
-import { EmailModule } from '../email/email.module';
 import { getMinioConnection } from '../storage/minio-config';
+import { EmailServiceClient } from '../integrations/email-service.client';
 
 const createStorage = async () => {
   const { s3, bucket, prefix } = await getMinioConnection();
@@ -24,7 +25,6 @@ const createStorage = async () => {
 
 @Module({
   imports: [
-    EmailModule,
     MulterModule.registerAsync({
       useFactory: async () => ({
         storage: await createStorage(),
@@ -32,8 +32,8 @@ const createStorage = async () => {
       }),
     }),
   ],
-  controllers: [GarantiasController],
-  providers: [GarantiasService],
+  controllers: [GarantiasController, GarantiasInternalController],
+  providers: [GarantiasService, EmailServiceClient],
   exports: [GarantiasService],
 })
 export class GarantiasModule {}

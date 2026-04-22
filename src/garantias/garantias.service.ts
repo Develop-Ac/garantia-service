@@ -1,14 +1,15 @@
-﻿import { BadRequestException, ForbiddenException, Injectable, NotFoundException, Logger } from '@nestjs/common';
+﻿import { BadRequestException, Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { AnexoGarantia, Garantia, HistoricoGarantia, Prisma } from '@prisma/client';
 import { Express } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
-import { EmailService } from '../email/email.service';
+import { EmailServiceClient } from '../integrations/email-service.client';
 import { CriarGarantiaDto } from './dto/criar-garantia.dto';
 import { AtualizarStatusGarantiaDto } from './dto/atualizar-status.dto';
 import { AtualizarGarantiaDto } from './dto/atualizar-garantia.dto';
-import { WebhookRespostaDto } from './dto/webhook-resposta.dto';
+import { InternalValidarVinculoDto } from './dto/internal-validar-vinculo.dto';
+import { InternalEmailLinkedDto } from './dto/internal-email-linked.dto';
 import { getMinioConnection } from '../storage/minio-config';
 import { normalizeStorageKey } from '../storage/storage-key.util';
 
@@ -68,7 +69,7 @@ export class GarantiasService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly emailService: EmailService,
+    private readonly emailServiceClient: EmailServiceClient,
   ) { }
 
   async listarTodas() {
@@ -212,20 +213,22 @@ export class GarantiasService {
 
         const text = `Prezados,\n\nAbrimos um processo de ${dto.tipoGarantia} para o(s) seguinte(s) produto(s):\n${dto.produtos}\n\nReferente a(s) NF(s) de Compra: ${dto.nfsCompra ?? 'N/A'}\nCodigo de Controle Interno: ${dto.notaFiscal}\nDescricao do problema: ${dto.descricao}\n\nAtenciosamente,\n${process.env.EMAIL_FROM_NAME ?? 'Equipe de Qualidade AC Acessorios'}`;
 
-        const attachments = await this.buildEmailAttachments(anexos);
+        const recipients = this.parseRecipients(dto.emailFornecedor);
+        const ccRecipients = this.parseRecipients(dto.copiasEmail);
+        const attachments = this.buildOutboundAttachments(anexos);
 
-        const emailResponse = await this.emailService.send({
-          to: dto.emailFornecedor,
-          cc: dto.copiasEmail || undefined,
+        const outbound = await this.emailServiceClient.enqueueOutbound({
+          recipients,
+          cc: ccRecipients,
           subject,
-          html,
-          text,
+          bodyHtml: html,
+          bodyText: text,
           attachments,
         });
 
         descricaoHistorico = html;
         tipoHistorico = 'Email Enviado';
-        messageId = emailResponse.messageId ?? null;
+        messageId = `outbound:${outbound.outboundMessageId}`;
         assunto = subject;
       }
 
@@ -374,18 +377,18 @@ export class GarantiasService {
         if (parentId) headers['In-Reply-To'] = parentId;
         if (thread.length) headers['References'] = thread.map((item) => item.id).join(' ');
 
-        const attachments = await this.buildEmailAttachments(anexos);
-        const email = await this.emailService.send({
-          to: destinatario,
-          cc: ccFinal,
+        const attachments = this.buildOutboundAttachments(anexos);
+        const outbound = await this.emailServiceClient.enqueueOutbound({
+          recipients: this.parseRecipients(destinatario),
+          cc: this.parseRecipients(ccFinal),
           subject: computedSubject,
-          html: bodyHtml,
-          text: bodyText,
+          bodyHtml,
+          bodyText,
           attachments,
           headers: Object.keys(headers).length ? headers : undefined,
         });
 
-        messageId = email.messageId ?? null;
+        messageId = `outbound:${outbound.outboundMessageId}`;
       }
 
       let descricaoHistorico = dto.descricao ?? '';
@@ -422,33 +425,108 @@ export class GarantiasService {
     });
   }
 
-  async registrarWebhook(secret: string | undefined, dto: WebhookRespostaDto) {
-    const expectedSecret = process.env.N8N_SECRET_KEY ?? process.env.WEBHOOK_SECRET_KEY;
-    if (!secret || secret !== expectedSecret) {
-      throw new ForbiddenException('Acesso nao autorizado.');
-    }
+  async marcarComoVisto(id: number) {
+    await this.prisma.$transaction([
+      this.prisma.garantia.update({ where: { id }, data: { temNovaInteracao: false } }),
+      this.prisma.historicoGarantia.updateMany({ where: { garantiaId: id }, data: { foiVisto: true } }),
+    ]);
 
-    const garantia = await this.prisma.garantia.findFirst({ where: { notaInterna: dto.ni_number } });
+    return { message: 'Interacoes marcadas como vistas.' };
+  }
+
+  async obterResumoInterno(id: number) {
+    const garantia = await this.prisma.garantia.findUnique({ where: { id } });
     if (!garantia) {
-      return { message: 'Garantia nao encontrada.' };
+      throw new NotFoundException('Garantia nao encontrada.');
     }
 
-    if (dto.message_id) {
-      const duplicado = await this.prisma.historicoGarantia.findFirst({ where: { messageId: dto.message_id } });
-      if (duplicado) {
-        return { message: 'E-mail duplicado ignorado.' };
-      }
+    return {
+      garantiaId: garantia.id,
+      codigoGarantia: garantia.notaInterna,
+      notaInterna: garantia.notaInterna,
+      status: garantia.status,
+      statusLabel: this.statusLabel(garantia.status),
+      nomeFornecedor: garantia.nomeFornecedor,
+      emailFornecedor: garantia.emailFornecedor,
+      permiteVinculoEmail: this.permiteVinculoEmail(garantia.status),
+      temNovaInteracao: garantia.temNovaInteracao ?? false,
+    };
+  }
+
+  async buscarPorCodigoInterno(codigo: string) {
+    const normalized = (codigo ?? '').trim();
+    const garantias = await this.prisma.garantia.findMany({
+      where: { notaInterna: normalized },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    });
+
+    return {
+      items: garantias.map((garantia) => ({
+        garantiaId: garantia.id,
+        codigoGarantia: garantia.notaInterna,
+        notaInterna: garantia.notaInterna,
+        status: garantia.status,
+        statusLabel: this.statusLabel(garantia.status),
+        nomeFornecedor: garantia.nomeFornecedor,
+        emailFornecedor: garantia.emailFornecedor,
+        createdAt: garantia.createdAt,
+        permiteVinculoEmail: this.permiteVinculoEmail(garantia.status),
+      })),
+    };
+  }
+
+  async validarVinculoEmailInterno(id: number, dto: InternalValidarVinculoDto) {
+    const garantia = await this.prisma.garantia.findUnique({ where: { id } });
+    if (!garantia) {
+      return {
+        allowed: false,
+        garantiaId: id,
+        reason: 'GARANTIA_NOT_FOUND',
+      };
     }
+
+    const allowed = this.permiteVinculoEmail(garantia.status);
+
+    return {
+      allowed,
+      garantiaId: garantia.id,
+      reason: allowed ? null : 'GARANTIA_LINK_NOT_ALLOWED',
+      context: {
+        source: dto.source,
+        reasonCode: dto.reasonCode,
+        confidenceScore: dto.confidenceScore,
+      },
+    };
+  }
+
+  async registrarTimelineEmailInterno(id: number, dto: InternalEmailLinkedDto) {
+    const garantia = await this.prisma.garantia.findUnique({ where: { id } });
+    if (!garantia) {
+      throw new NotFoundException('Garantia nao encontrada.');
+    }
+
+    const actor = dto.userName || dto.userId ? `${dto.userName ?? 'usuario'} (${dto.userId ?? '-'})` : 'sistema';
+    const descricao = [
+      `Evento: ${dto.eventType}`,
+      `Modo de vinculo: ${dto.linkMode}`,
+      dto.subject ? `Assunto: ${dto.subject}` : null,
+      dto.from ? `Remetente: ${dto.from}` : null,
+      dto.internetMessageId ? `Message-ID: ${dto.internetMessageId}` : null,
+      `Origem: ${actor}`,
+    ]
+      .filter(Boolean)
+      .join('<br>');
 
     await this.prisma.$transaction(async (tx) => {
       await tx.historicoGarantia.create({
         data: {
           garantiaId: garantia.id,
-          descricao: `<b>De:</b> ${dto.sender}<br><hr>${dto.email_body_html}`,
-          tipoInteracao: 'Resposta Recebida',
-          foiVisto: false,
-          messageId: dto.message_id ?? null,
+          descricao,
+          tipoInteracao: 'Email Vinculado',
+          foiVisto: true,
           assunto: dto.subject ?? null,
+          messageId: dto.internetMessageId ?? null,
         },
       });
 
@@ -458,16 +536,7 @@ export class GarantiasService {
       });
     });
 
-    return { message: 'Resposta registrada com sucesso.' };
-  }
-
-  async marcarComoVisto(id: number) {
-    await this.prisma.$transaction([
-      this.prisma.garantia.update({ where: { id }, data: { temNovaInteracao: false } }),
-      this.prisma.historicoGarantia.updateMany({ where: { garantiaId: id }, data: { foiVisto: true } }),
-    ]);
-
-    return { message: 'Interacoes marcadas como vistas.' };
+    return { accepted: true };
   }
 
   private mapHistoricoToTimeline(h: HistoricoGarantia, garantia: Garantia): TimelineEmail | TimelineHistorico {
@@ -478,9 +547,11 @@ export class GarantiasService {
       const isRecebida = tipo.includes('recebida');
       const remetente = isRecebida
         ? this.extractSender(h.descricao) ?? 'Remetente desconhecido'
-        : process.env.EMAIL_FROM ?? process.env.EMAIL_USER ?? 'AC Acessorios';
+        : process.env.GARANTIA_TIMELINE_FROM ?? 'AC Acessorios';
 
-      const destinatarios = isRecebida ? (process.env.EMAIL_FROM ?? '') : (garantia.emailFornecedor ?? '');
+      const destinatarios = isRecebida
+        ? (process.env.GARANTIA_TIMELINE_TO ?? '')
+        : (garantia.emailFornecedor ?? '');
 
       return {
         type: 'email',
@@ -607,39 +678,30 @@ export class GarantiasService {
     return enriched.key ?? enriched.path ?? enriched.location ?? file.filename ?? '';
   }
 
-  private async resolveAttachmentPath(file: Express.Multer.File): Promise<string | undefined> {
-    const enriched = file as Express.Multer.File & { location?: string; key?: string };
-    const key = enriched.key ?? this.getFileStoragePath(file);
+  private parseRecipients(value?: string | null) {
+    if (!value) return [];
 
-    if (key) {
-      try {
-        const { s3, bucket, prefix } = await this.getMinioClient();
-        const normalizedKey = normalizeStorageKey(key, bucket, prefix);
-        const command = new GetObjectCommand({
-          Bucket: bucket,
-          Key: normalizedKey,
-        });
-        return await getSignedUrl(s3, command, { expiresIn: 60 * 15 });
-      } catch (error) {
-        this.logger.warn(`Falha ao gerar URL temporaria para ${file.originalname}: ${error}`);
-      }
-    }
-
-    if (enriched.location && /^https?:\/\//i.test(enriched.location)) return enriched.location;
-    if (typeof file.path === 'string' && /^https?:\/\//i.test(file.path)) return file.path;
-    return undefined;
+    return value
+      .split(/[;,]/g)
+      .map((email) => email.trim())
+      .filter(Boolean)
+      .map((email) => ({ email }));
   }
-  private async buildEmailAttachments(anexos?: Express.Multer.File[]) {
+
+  private buildOutboundAttachments(anexos?: Express.Multer.File[]) {
     if (!anexos?.length) return undefined;
-    const mapped = await Promise.all(
-      anexos.map(async (file) => {
-        const path = await this.resolveAttachmentPath(file);
-        if (!path) return null;
-        return { filename: file.originalname, path };
-      }),
-    );
-    const filtered = mapped.filter((item): item is { filename: string; path: string } => Boolean(item));
-    return filtered.length ? filtered : undefined;
+
+    return anexos.map((file) => ({
+      fileName: file.originalname,
+      objectKey: this.getFileStoragePath(file),
+      mimeType: file.mimetype,
+      sizeBytes: file.size,
+    }));
+  }
+
+  private permiteVinculoEmail(status: number | null | undefined) {
+    if (status == null) return false;
+    return ![14, 15, 16].includes(status);
   }
 
   private getMinioClient() {

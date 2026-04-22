@@ -2,7 +2,6 @@ import {
   Body,
   Controller,
   Get,
-  Headers,
   Param,
   ParseIntPipe,
   Post,
@@ -17,7 +16,6 @@ import { GarantiasService } from './garantias.service';
 import { CriarGarantiaDto } from './dto/criar-garantia.dto';
 import { AtualizarStatusGarantiaDto } from './dto/atualizar-status.dto';
 import { AtualizarGarantiaDto } from './dto/atualizar-garantia.dto';
-import { WebhookRespostaDto } from './dto/webhook-resposta.dto';
 
 @Controller('garantias')
 export class GarantiasController {
@@ -60,11 +58,6 @@ export class GarantiasController {
     @UploadedFiles() anexos: Express.Multer.File[] = [],
   ) {
     return this.garantiasService.registrarAtualizacao(id, dto, anexos ?? []);
-  }
-
-  @Post('email-reply')
-  registrarWebhook(@Headers('x-n8n-secret') secret: string | undefined, @Body() dto: WebhookRespostaDto) {
-    return this.garantiasService.registrarWebhook(secret, dto);
   }
 
   @Put(':id/marcar-como-visto')
