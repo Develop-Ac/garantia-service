@@ -21,8 +21,9 @@ export class InternalValidarVinculoDto {
   @IsNotEmpty()
   reasonCode!: string;
 
+  @IsOptional()
   @IsNumber()
-  confidenceScore!: number;
+  confidenceScore?: number;
 
   @IsOptional()
   @IsString()
