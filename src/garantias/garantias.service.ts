@@ -35,10 +35,16 @@ interface TimelineHistorico {
 
 interface EmailAttachmentRow {
   id: bigint | number;
-  emailId: number;
+  emailId: number | null;
   garantiaId: number;
   nomeFicheiro: string;
   pathFicheiro: string;
+  mimeType: string | null;
+  sizeBytes: string | null;
+  contentId: string | null;
+  isInline: boolean | null;
+  storageBucket: string | null;
+  storageKey: string | null;
   dataUpload: Date | null;
 }
 
@@ -534,6 +540,44 @@ export class GarantiasService {
         where: { id: garantia.id },
         data: { temNovaInteracao: true },
       });
+
+      if (dto.attachments?.length) {
+        for (const attachment of dto.attachments) {
+          const path = this.normalizeLinkedAttachmentPath(attachment.path, attachment.storageKey);
+          if (!path) {
+            continue;
+          }
+
+          await tx.$executeRaw(
+            Prisma.sql`
+              INSERT INTO "gar_anexos_email" (
+                "email_id",
+                "garantia_id",
+                "nome_ficheiro",
+                "path_ficheiro",
+                "mime_type",
+                "size_bytes",
+                "content_id",
+                "is_inline",
+                "storage_bucket",
+                "storage_key"
+              )
+              VALUES (
+                ${dto.emailServiceMessageId ?? null},
+                ${garantia.id},
+                ${attachment.fileName ?? this.extractFileNameFromPath(path)},
+                ${path},
+                ${attachment.mimeType ?? null},
+                ${attachment.sizeBytes ?? null},
+                ${this.normalizeContentId(attachment.contentId)},
+                ${Boolean(attachment.isInline) || Boolean(attachment.contentId)},
+                ${attachment.storageBucket ?? null},
+                ${attachment.storageKey ?? null}
+              )
+            `,
+          );
+        }
+      }
     });
 
     return { accepted: true };
@@ -630,6 +674,13 @@ export class GarantiasService {
       garantia_id: anexo.garantiaId,
       nome_ficheiro: anexo.nomeFicheiro,
       path_ficheiro: anexo.pathFicheiro,
+      mime_type: null,
+      size_bytes: null,
+      content_id: null,
+      is_inline: false,
+      storage_bucket: null,
+      storage_key: anexo.pathFicheiro,
+      source: 'GARANTIA_UPLOAD',
       data_upload: anexo.dataUpload,
     };
   }
@@ -640,6 +691,13 @@ export class GarantiasService {
       garantia_id: anexo.garantiaId,
       nome_ficheiro: anexo.nomeFicheiro,
       path_ficheiro: anexo.pathFicheiro,
+      mime_type: anexo.mimeType,
+      size_bytes: anexo.sizeBytes == null ? null : Number(anexo.sizeBytes),
+      content_id: anexo.contentId,
+      is_inline: Boolean(anexo.isInline),
+      storage_bucket: anexo.storageBucket,
+      storage_key: anexo.storageKey ?? anexo.pathFicheiro,
+      source: 'EMAIL_ATTACHMENT',
       data_upload: anexo.dataUpload,
       email_id: anexo.emailId,
     };
@@ -656,7 +714,13 @@ export class GarantiasService {
         "email_id" AS "emailId",
         "garantia_id" AS "garantiaId",
         "nome_ficheiro" AS "nomeFicheiro",
-        "path_ficheiro" AS "pathFicheiro",
+        COALESCE("storage_key", "path_ficheiro") AS "pathFicheiro",
+        "mime_type" AS "mimeType",
+        "size_bytes"::text AS "sizeBytes",
+        "content_id" AS "contentId",
+        "is_inline" AS "isInline",
+        "storage_bucket" AS "storageBucket",
+        "storage_key" AS "storageKey",
         "data_upload" AS "dataUpload"
       FROM "gar_anexos_email"
       WHERE "garantia_id" IN (${Prisma.join(garantiaIds)})
@@ -676,6 +740,23 @@ export class GarantiasService {
   private getFileStoragePath(file: Express.Multer.File) {
     const enriched = file as Express.Multer.File & { location?: string; key?: string };
     return enriched.key ?? enriched.path ?? enriched.location ?? file.filename ?? '';
+  }
+
+  private normalizeLinkedAttachmentPath(path?: string | null, storageKey?: string | null) {
+    const candidate = path?.trim() || storageKey?.trim() || '';
+    return candidate || null;
+  }
+
+  private extractFileNameFromPath(path: string) {
+    const normalized = path.replace(/\\/g, '/');
+    const chunks = normalized.split('/').filter(Boolean);
+    return chunks[chunks.length - 1] ?? 'anexo';
+  }
+
+  private normalizeContentId(value?: string | null) {
+    const trimmed = value?.trim();
+    if (!trimmed) return null;
+    return trimmed.replace(/^<|>$/g, '');
   }
 
   private parseRecipients(value?: string | null) {
