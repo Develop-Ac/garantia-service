@@ -16,6 +16,7 @@ import { normalizeStorageKey } from '../storage/storage-key.util';
 interface TimelineEmail {
   type: 'email';
   id: number;
+  message_id: string | null;
   remetente: string;
   destinatarios: string;
   assunto: string;
@@ -600,6 +601,7 @@ export class GarantiasService {
       return {
         type: 'email',
         id: h.id,
+        message_id: h.messageId ?? null,
         remetente,
         destinatarios,
         assunto: h.assunto ?? '(sem assunto)',
